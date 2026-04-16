@@ -1,0 +1,255 @@
+import unittest
+
+from agent.kg_store import KGState
+from agent.runner import process_function_call
+from agent.schema_loader import load_schema
+from agent.stage_runtime import sync_runtime_state
+
+
+class StageRuntimeTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.classification_schema = load_schema("classification")
+        cls.stage_1_schema = load_schema("stage_1")
+        cls.stage_2_schema = load_schema("stage_2")
+        cls.routing = load_schema("routing")
+        cls.max_implemented_stage = 2
+
+    def process_call(self, name: str, args: dict, kg_state: KGState, stage: int, schema: dict) -> str:
+        return process_function_call(
+            name,
+            args,
+            kg_state,
+            stage=stage,
+            schema=schema,
+            routing=self.routing,
+            max_implemented_stage=self.max_implemented_stage,
+        )
+
+    def test_stage_0_blocks_advance_until_type_vector_is_complete(self) -> None:
+        kg_state = KGState(stage=0)
+        result = self.process_call(
+            "advance_stage",
+            {"from_stage": 0, "to_stage": 1, "summary": "done"},
+            kg_state,
+            stage=0,
+            schema=self.classification_schema,
+        )
+
+        self.assertIn("Validation error", result)
+        self.assertEqual(kg_state.stage, 0)
+
+    def test_stage_1_checks_are_activated_from_routing(self) -> None:
+        kg_state = KGState(
+            stage=1,
+            type_vector={
+                "alpha_family": "carry",
+                "exposure_structure": "market_neutral",
+                "asset_class": "futures",
+                "market_scope": "us",
+                "decision_cadence": "daily",
+                "execution_mode": "systematic",
+            },
+        )
+
+        sync_runtime_state(1, self.stage_1_schema, self.routing, kg_state)
+
+        self.assertEqual(
+            kg_state.active_checks["stage_1"],
+            ["beta_neutrality_assumption", "risk_premium_decomposition"],
+        )
+
+    def test_stage_1_checks_can_also_activate_from_stage_schema_triggers(self) -> None:
+        kg_state = KGState(
+            stage=1,
+            type_vector={
+                "alpha_family": "event_driven",
+                "exposure_structure": "long_only",
+                "asset_class": "equity",
+                "market_scope": "korea",
+                "decision_cadence": "daily",
+                "execution_mode": "systematic",
+            },
+            deferred={"universe_scope": "concentrated"},
+        )
+
+        sync_runtime_state(1, self.stage_1_schema, self.routing, kg_state)
+
+        self.assertEqual(kg_state.active_checks["stage_1"], ["walk_forward_emphasis"])
+
+    def test_stage_1_rejects_invalid_deferred_value(self) -> None:
+        kg_state = KGState(stage=1)
+        result = self.process_call(
+            "update_deferred",
+            {"dimension": "universe_scope", "value": "mega"},
+            kg_state,
+            stage=1,
+            schema=self.stage_1_schema,
+        )
+
+        self.assertIn("Validation error", result)
+        self.assertNotIn("universe_scope", kg_state.deferred)
+
+    def test_stage_1_normalizes_boolean_entity_values(self) -> None:
+        kg_state = KGState(
+            stage=1,
+            type_vector={
+                "alpha_family": "event_driven",
+                "exposure_structure": "long_only",
+                "asset_class": "equity",
+                "market_scope": "korea",
+                "decision_cadence": "intraday",
+                "execution_mode": "systematic",
+            },
+        )
+
+        result = self.process_call(
+            "update_kg_entity",
+            {"entity": "Hypothesis", "property": "falsifiable", "value": "true"},
+            kg_state,
+            stage=1,
+            schema=self.stage_1_schema,
+        )
+
+        self.assertIn("updated", result)
+        self.assertIs(kg_state.entities["Hypothesis"]["falsifiable"], True)
+        self.assertEqual(kg_state.gates["G1_6"]["status"], "pass")
+
+    def test_stage_1_completion_advances_to_stage_2(self) -> None:
+        kg_state = KGState(
+            stage=1,
+            type_vector={
+                "alpha_family": "event_driven",
+                "exposure_structure": "long_only",
+                "asset_class": "equity",
+                "market_scope": "korea",
+                "decision_cadence": "daily",
+                "execution_mode": "systematic",
+            },
+            deferred={
+                "universe_scope": "diversified",
+                "universe_anchor": "KOSPI",
+            },
+            entities={
+                "Edge": {
+                    "type": "behavioral",
+                    "direction": "long",
+                    "horizon": "3 days",
+                },
+                "Hypothesis": {
+                    "claim": "This edge exists because post-event repricing is slow.",
+                    "mechanism": "Investors underreact to the event signal.",
+                    "falsifiable": True,
+                    "falsification_condition": "No abnormal return remains after the event.",
+                },
+                "MarketInefficiency": {
+                    "persistence": "Capacity and attention constraints keep the edge alive.",
+                    "structural_barrier": "information",
+                },
+            },
+        )
+
+        sync_runtime_state(1, self.stage_1_schema, self.routing, kg_state)
+        result = self.process_call(
+            "advance_stage",
+            {"from_stage": 1, "to_stage": 2, "summary": "stage done"},
+            kg_state,
+            stage=1,
+            schema=self.stage_1_schema,
+        )
+
+        self.assertIn("Stage 1 -> 2", result)
+        self.assertEqual(kg_state.stage, 2)
+        self.assertFalse(kg_state.workflow_complete)
+        self.assertIn(1, kg_state.completed_stages)
+
+    def test_stage_2_with_no_active_checks_can_advance(self) -> None:
+        kg_state = KGState(
+            stage=2,
+            type_vector={
+                "alpha_family": "carry",
+                "exposure_structure": "long_only",
+                "asset_class": "futures",
+                "market_scope": "us",
+                "decision_cadence": "daily",
+                "execution_mode": "systematic",
+            },
+            deferred={"signal_source": "price_volume"},
+            entities={
+                "ReturnDecomposition": {
+                    "method": "attribution",
+                    "sample_period": "2020-01 ~ 2024-12",
+                }
+            },
+        )
+
+        sync_runtime_state(2, self.stage_2_schema, self.routing, kg_state)
+        self.assertEqual(kg_state.active_checks["stage_2"], [])
+        self.assertEqual(kg_state.gates["G2_P3"]["status"], "pass")
+
+        result = self.process_call(
+            "advance_stage",
+            {"from_stage": 2, "to_stage": 3, "summary": "stage done"},
+            kg_state,
+            stage=2,
+            schema=self.stage_2_schema,
+        )
+
+        self.assertIn("not implemented yet", result)
+        self.assertEqual(kg_state.stage, 2)
+        self.assertTrue(kg_state.workflow_complete)
+        self.assertIn(2, kg_state.completed_stages)
+
+    def test_stage_2_placeholders_do_not_satisfy_plan_gates(self) -> None:
+        kg_state = KGState(
+            stage=2,
+            type_vector={
+                "alpha_family": "event_driven",
+                "exposure_structure": "long_only",
+                "asset_class": "equity",
+                "market_scope": "korea",
+                "decision_cadence": "intraday",
+                "execution_mode": "systematic",
+            },
+            deferred={"signal_source": "price_volume"},
+            entities={
+                "ReturnDecomposition": {
+                    "method": "event_study",
+                    "sample_period": "unknown",
+                },
+                "event_definition_consistency": {
+                    "tests": "unknown",
+                    "evidence_type": "attestation",
+                    "criterion": "unknown",
+                    "method": "unknown",
+                },
+                "look_ahead_event_timing": {
+                    "tests": "tbd",
+                    "evidence_type": "attestation",
+                    "criterion": "not sure",
+                    "method": "unknown",
+                },
+            },
+        )
+
+        sync_runtime_state(2, self.stage_2_schema, self.routing, kg_state)
+
+        self.assertEqual(kg_state.gates["G2_P1"]["status"], "pass")
+        self.assertEqual(kg_state.gates["G2_P2"]["status"], "pending")
+        self.assertEqual(kg_state.gates["G2_P3"]["status"], "pending")
+
+        result = self.process_call(
+            "advance_stage",
+            {"from_stage": 2, "to_stage": 3, "summary": "stage done"},
+            kg_state,
+            stage=2,
+            schema=self.stage_2_schema,
+        )
+
+        self.assertIn("Validation error", result)
+        self.assertEqual(kg_state.stage, 2)
+        self.assertFalse(kg_state.workflow_complete)
+
+
+if __name__ == "__main__":
+    unittest.main()

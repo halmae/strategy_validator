@@ -1,0 +1,175 @@
+# =============================================================================
+# Classification Schema
+# =============================================================================
+# Purpose:
+#   Taxonomy + inference policy + question templates for Stage 0.
+#   Produces a 6-dimensional type_vector that is the sole input to routing.
+#
+# Design principles:
+#   - Each dimension is orthogonal (no axis conflation)
+#   - Pure classification only: no KG checks, no gating, no prerequisites
+#     (those live in routing.yaml)
+#   - Input is sparse: intuition/hypothesis only
+#   - Implementation details deferred to Stage 1+
+#   - Deferred dimensions: signal_source (→ Stage 2), universe_scope /
+#     universe_anchor (→ Stage 1)
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Dimensions
+# -----------------------------------------------------------------------------
+dimensions:
+
+  alpha_family:
+    description: >
+      The mechanism by which the strategy generates alpha.
+      Answers: "어떤 원리로 수익을 내는가?"
+    values:
+      event_driven:
+        label: "Event-Driven"
+        note: "Earnings, M&A, index rebalancing, regulatory events"
+      cross_sectional_factor:
+        label: "Cross-Sectional Factor"
+        note: "Relative value across instruments on shared characteristics"
+      time_series:
+        label: "Time-Series Momentum / Mean-Reversion"
+        note: "Single instrument signal based on its own price history"
+      stat_arb:
+        label: "Statistical Arbitrage"
+        note: "Exploits temporary mispricing between related instruments"
+      carry:
+        label: "Carry"
+        note: "Systematic collection of risk premium across time or cross-section"
+      macro:
+        label: "Macro"
+        note: "Driven by macroeconomic indicators or regime"
+      other:
+        label: "Other / Hybrid"
+
+  exposure_structure:
+    description: >
+      Portfolio construction and net market exposure.
+      Answers: "포지션 구조가 어떤가?"
+      Orthogonal to alpha_family: e.g. event_driven + long_short is valid.
+    values:
+      long_only:    { label: "Long Only",       net_exposure: "~100% long" }
+      long_bias:    { label: "Long Bias",        net_exposure: "net long, some shorts" }
+      long_short:   { label: "Long / Short",     net_exposure: "variable net" }
+      market_neutral: { label: "Market Neutral", net_exposure: "~0% net" }
+
+  asset_class:
+    description: "Primary instrument class traded."
+    values:
+      equity:       { label: "Equity" }
+      futures:      { label: "Futures" }
+      crypto:       { label: "Crypto" }
+      fx:           { label: "FX" }
+      fixed_income: { label: "Fixed Income" }
+      multi_asset:  { label: "Multi-Asset" }
+
+  market_scope:
+    description: >
+      Geographic / market scope of the strategy.
+      Venue and exchange detail (tick size, short-selling rules, etc.)
+      resolved at runtime via market_constraints.yaml.
+    values:
+      korea:           { label: "Korea (KR)" }
+      us:              { label: "United States (US)" }
+      developed_ex_us: { label: "Developed ex-US" }
+      emerging:        { label: "Emerging Markets" }
+      global:          { label: "Global / Multi-market" }
+    extensible: true
+
+  decision_cadence:
+    description: >
+      Frequency of signal generation and position decisions.
+      This is the decision clock — NOT average holding period.
+      Holding period is a Stage 1 property.
+    values:
+      intraday:       { label: "Intraday",      examples: "tick, 1min, 5min" }
+      daily:          { label: "Daily",          examples: "EOD signal, next-day execution" }
+      weekly:         { label: "Weekly",         examples: "weekend rebalance" }
+      monthly:        { label: "Monthly",        examples: "monthly rebalance" }
+      quarterly_plus: { label: "Quarterly+",     examples: "earnings season, annual" }
+
+  execution_mode:
+    description: "Degree of rule-based automation."
+    values:
+      systematic:      { label: "Fully Systematic" }
+      semi_systematic: { label: "Semi-Systematic", note: "Rule-based with manual override" }
+      discretionary:   { label: "Discretionary" }
+    scope_policy:
+      out_of_scope: [discretionary]
+      reason: >
+        Discretionary strategies lack a formally verifiable signal.
+        Validation stages 3–5 assume testable, rule-based entry/exit.
+      on_detect: >
+        Warn the user and stop. Do not proceed to routing.
+        Message: "Discretionary 전략은 이 시스템의 검증 범위 밖입니다.
+        Signal을 rule로 표현 가능한 경우 semi_systematic으로 재분류하세요."
+
+# -----------------------------------------------------------------------------
+# Output
+# -----------------------------------------------------------------------------
+output:
+  type_vector:
+    fields: [alpha_family, exposure_structure, asset_class, market_scope,
+             decision_cadence, execution_mode]
+    example:
+      alpha_family:       event_driven
+      exposure_structure: long_only
+      asset_class:        equity
+      market_scope:       korea
+      decision_cadence:   daily
+      execution_mode:     systematic
+
+# -----------------------------------------------------------------------------
+# Deferred dimensions
+# Not part of Stage 0. Resolved in the indicated stage.
+# -----------------------------------------------------------------------------
+deferred:
+  signal_source:
+    to_stage: 2
+    reason: "Data bias checks are a Stage 2 concern, not a classification concern."
+    values: [price_volume, fundamental, alternative, macro, mixed]
+  universe_scope:
+    to_stage: 1
+    reason: "Affects statistical significance thresholds in Stage 1."
+    values: [single, concentrated, diversified, broad]
+    thresholds: ["1", "<20", "20~100", "100+"]
+  universe_anchor:
+    to_stage: 1
+    reason: "Specific index/exchange context needed for Stage 1 edge analysis."
+    values: [KOSPI, KOSDAQ, SP500, NASDAQ100, custom, global_multi_market]
+
+# -----------------------------------------------------------------------------
+# Agent inference policy
+# -----------------------------------------------------------------------------
+agent:
+  input_assumption: >
+    Input is sparse: intuition and hypothesis only.
+    Do NOT expect entry/exit conditions, holding period, or backtest results.
+    Those emerge through Stage 1+ dialogue.
+
+  inference_order:
+    - alpha_family       # most inferable from intuition description
+    - asset_class        # often explicitly stated
+    - market_scope       # often explicitly stated
+    - exposure_structure # often inferable from alpha_family
+    - decision_cadence   # usually requires clarification
+    - execution_mode     # usually requires clarification
+
+  inference_rules:
+    - "alpha_family == event_driven AND no exposure hint → suggest long_only, confirm"
+    - "alpha_family == stat_arb → suggest market_neutral, confirm"
+    - "alpha_family == carry AND asset_class == futures → suggest long_short, confirm"
+
+  question_principle: >
+    Each question targets exactly one unresolved dimension.
+    Surface the user's mental model — do not request spec data.
+    Ask "어떤 원리로", "어떤 시장에서", "얼마나 자주 판단하는가".
+    Do NOT ask "진입 조건이 무엇인가요", "보유기간이 얼마인가요".
+
+  completion_condition: >
+    All 6 dimensions resolved with no null values.
+    If execution_mode resolves to discretionary → trigger scope_policy warning and halt.

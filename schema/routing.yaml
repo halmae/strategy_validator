@@ -1,0 +1,142 @@
+# =============================================================================
+# Routing
+# =============================================================================
+# Purpose:
+#   Map the type_vector (from classification.yaml) to a stage sequence.
+#   Also holds prerequisites: KG entity requirements that must be satisfied
+#   before certain stages activate.
+#
+# Design principles:
+#   - Stage catalog declares default status
+#   - Rules section contains overrides only (no redundant defaults)
+#   - Prerequisites are route-conditioned KG entity requirements
+#   - Modulation is machine-readable (add_checks lists, not hint strings)
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Stage catalog
+# -----------------------------------------------------------------------------
+stages:
+  - { id: 0, name: classification,  status: required }
+  - { id: 1, name: edge_existence,  status: required }
+  - { id: 2, name: decomposition,   status: required }
+  - { id: 3, name: signal_quality,  status: conditional }
+  - { id: 4, name: exit_mechanism,  status: required }
+  - { id: 5, name: execution,       status: required }
+
+# -----------------------------------------------------------------------------
+# Rules — overrides only
+# -----------------------------------------------------------------------------
+rules:
+  - stage: 3
+    conditions:
+      - if:   { kg_entity_exists: signal_score }
+        then: required
+      - default: skip
+
+# -----------------------------------------------------------------------------
+# Prerequisites
+# KG entity requirements conditioned on type_vector values.
+# Checked after Stage 0, before Stage 1 begins.
+# Violations produce a warning + question, not a hard block
+# (agent asks user to resolve, then re-checks).
+# -----------------------------------------------------------------------------
+prerequisites:
+  - condition:  { alpha_family: event_driven }
+    requires:   { kg_entity: signal_score }
+    message: >
+      event_driven 전략은 signal_score entity가 정의되어야
+      Stage 3 (Signal Quality)가 활성화됩니다.
+      지금 signal을 어떻게 정량화할 것인지 알고 있나요?
+
+  - condition:  { execution_mode: semi_systematic }
+    requires:   { kg_entity: override_rule }
+    message: >
+      semi_systematic 전략은 manual override 조건을 명시해야
+      Stage 5 (Execution) 검증이 가능합니다.
+
+# -----------------------------------------------------------------------------
+# Modulation — structured sub-check activation
+# Consumed by stage schemas at runtime.
+# Format: dimension → value → stage_id → add_checks: [check_ids]
+# -----------------------------------------------------------------------------
+modulation:
+
+  decision_cadence:
+    intraday:
+      stage_5:
+        add_checks: [latency_modeling, fill_rate_analysis, queue_position_sensitivity]
+      stage_3:
+        add_checks: [signal_decay_intraday]
+    daily:
+      stage_5:
+        add_checks: [fill_rate_analysis]
+    weekly:   {}
+    monthly:  {}
+    quarterly_plus:
+      stage_1:
+        add_checks: [regime_sensitivity]
+      stage_4:
+        add_checks: [drawdown_duration_analysis]
+
+  alpha_family:
+    stat_arb:
+      stage_1:
+        add_checks: [cointegration_stability, spread_stationarity]
+      stage_2:
+        add_checks: [pair_selection_bias]
+    carry:
+      stage_1:
+        add_checks: [risk_premium_decomposition]
+    event_driven:
+      stage_2:
+        add_checks: [event_definition_consistency, look_ahead_event_timing]
+
+  exposure_structure:
+    market_neutral:
+      stage_1:
+        add_checks: [beta_neutrality_assumption]
+      stage_5:
+        add_checks: [hedge_ratio_stability]
+    long_short:
+      stage_5:
+        add_checks: [short_availability_check]
+
+  execution_mode:
+    semi_systematic:
+      stage_5:
+        add_checks: [manual_override_audit, rule_exception_log_review]
+
+  # signal_source lives in kg_state.deferred (resolved in Stage 2 entry)
+  # Runtime must check BOTH type_vector and deferred when evaluating modulation.
+  signal_source:
+    price_volume: {}
+    fundamental:
+      stage_2:
+        add_checks: [restatement_handling, filing_lag_check]
+    alternative:
+      stage_2:
+        add_checks: [point_in_time_check, survivorship_bias_check]
+    macro:
+      stage_2:
+        add_checks: [release_timing_check, vintage_data_handling]
+    mixed:
+      stage_2:
+        add_checks:
+          - point_in_time_check
+          - survivorship_bias_check
+          - restatement_handling
+          - filing_lag_check
+          - release_timing_check
+
+  # market_scope: constraint profiles resolved via market_constraints.yaml
+  market_scope:
+    lookup: market_constraints.yaml
+    lookup_key: market_scope
+    consumed_by: [stage_4, stage_5]
+    mapping:
+      korea:           [KOSPI, KOSDAQ]
+      us:              [SP500, NASDAQ]
+      developed_ex_us: null
+      emerging:        null
+      global:          null

@@ -1,0 +1,300 @@
+# =============================================================================
+# Stage 1: Edge Existence
+# =============================================================================
+# Purpose:
+#   Establish that a verifiable, theoretically grounded market inefficiency
+#   exists and that the strategy exploits it in a falsifiable way.
+#
+# Design principle:
+#   This stage answers one question: "왜 이 전략이 돈을 버는가?"
+#   If the answer cannot be articulated, decomposition and signal work
+#   in later stages have no foundation.
+#   Gate conditions are intentionally strict here — a weak edge hypothesis
+#   propagates as technical debt through all subsequent stages.
+# =============================================================================
+
+stage: 1
+name: edge_existence
+depends_on: classification   # type_vector must be resolved before entering
+
+# -----------------------------------------------------------------------------
+# Deferred dimensions resolved at this stage
+# (declared in classification.yaml as deferred → stage_1)
+# -----------------------------------------------------------------------------
+resolves_deferred:
+
+  universe_scope:
+    description: >
+      Number of instruments in the tradeable universe.
+      Determines statistical significance threshold baseline for gate conditions.
+    values:
+      single:       { label: "Single Instrument",  n: "1" }
+      concentrated: { label: "Concentrated",        n: "<20" }
+      diversified:  { label: "Diversified",         n: "20~100" }
+      broad:        { label: "Broad",               n: "100+" }
+    agent_question: >
+      "이 전략이 동시에 몇 개 종목에 포지션을 가져가나요?
+      아이디어 수준이라도 괜찮습니다."
+
+  universe_anchor:
+    description: >
+      Specific index or exchange that defines the investable universe.
+    values: [KOSPI, KOSDAQ, SP500, NASDAQ100, custom, global_multi_market]
+    agent_question: >
+      "유니버스의 기준이 되는 지수나 시장이 있나요?
+      예: KOSPI 전체, KOSPI200 구성종목, custom 필터 등"
+
+# Reminder: signal_source is further deferred → Stage 2
+further_deferred:
+  signal_source: stage_2
+
+# -----------------------------------------------------------------------------
+# KG Entities
+# -----------------------------------------------------------------------------
+entities:
+
+  Edge:
+    description: >
+      The market inefficiency the strategy systematically exploits.
+    properties:
+      type:
+        type: enum
+        values: [risk_premium, behavioral, structural, informational]
+        required: true
+        note: >
+          risk_premium: compensation for bearing systematic risk
+          behavioral: persistent mispricing from investor bias
+          structural: friction from regulation, mandate, or market design
+          informational: processing speed or alternative data advantage
+      direction:
+        type: enum
+        values: [long, short, long_short]
+        required: true
+      horizon:
+        type: str
+        required: true
+        note: "Expected holding period; must be consistent with frequency in type_vector"
+      capacity:
+        type: str
+        required: false
+        note: "Max AUM estimate before alpha materially decays. Optional at Stage 1."
+
+  Hypothesis:
+    description: >
+      Theoretical basis explaining why the Edge exists and persists.
+      Must be falsifiable — an unfalsifiable hypothesis cannot be tested
+      and provides no protection against overfitting in later stages.
+    properties:
+      claim:
+        type: str
+        required: true
+        note: "One-sentence statement: 'This edge exists because...'"
+      mechanism:
+        type: str
+        required: true
+        note: >
+          The channel through which the inefficiency operates.
+          e.g. "retail herding after earnings surprise",
+               "forced selling by index rebalancing",
+               "risk aversion spike during macro uncertainty"
+      falsifiable:
+        type: bool
+        required: true
+        gate: true    # must be true to pass Stage 1
+      falsification_condition:
+        type: str
+        required: true
+        note: "What empirical outcome would invalidate the hypothesis?"
+
+  MarketInefficiency:
+    description: >
+      The specific inefficiency in the market that makes the Edge viable.
+      Distinct from Hypothesis: Hypothesis explains why; MarketInefficiency
+      describes what the market is doing wrong.
+    properties:
+      persistence:
+        type: str
+        required: true
+        note: "Why has this inefficiency not been fully arbitraged away?"
+      structural_barrier:
+        type: enum
+        values: [behavioral, regulatory, capacity, information, liquidity]
+        required: true
+        note: "Primary barrier preventing efficient arbitrage"
+      decay_risk:
+        type: str
+        required: false
+        note: "Known threats to persistence (crowding, regime change, regulation)"
+
+# -----------------------------------------------------------------------------
+# Relationships
+# -----------------------------------------------------------------------------
+relationships:
+  - Edge --grounded_in--> Hypothesis
+  - Edge --exploits--> MarketInefficiency
+  - Hypothesis --explains--> MarketInefficiency.persistence
+
+# -----------------------------------------------------------------------------
+# Gate conditions
+# All must be satisfied to advance to Stage 2.
+# -----------------------------------------------------------------------------
+gate_conditions:
+  - id: G1_1
+    description: "Edge.type is defined"
+    check: Edge.type != null
+
+  - id: G1_2
+    description: "Edge.direction is defined"
+    check: Edge.direction != null
+
+  - id: G1_3
+    description: "Edge.horizon is consistent with type_vector.decision_cadence"
+    check: horizon_frequency_consistency(Edge.horizon, type_vector.decision_cadence)
+    note: "e.g. quarterly_plus cadence + 1-day horizon = inconsistency flag"
+
+  - id: G1_4
+    description: "Hypothesis.claim is defined"
+    check: Hypothesis.claim != null
+
+  - id: G1_5
+    description: "Hypothesis.mechanism is defined"
+    check: Hypothesis.mechanism != null
+
+  - id: G1_6
+    description: "Hypothesis is falsifiable"
+    check: Hypothesis.falsifiable == true
+    blocking: true    # stage cannot proceed if false
+
+  - id: G1_7
+    description: "Hypothesis.falsification_condition is defined"
+    check: Hypothesis.falsification_condition != null
+
+  - id: G1_8
+    description: "MarketInefficiency.persistence is defined"
+    check: MarketInefficiency.persistence != null
+
+  - id: G1_9
+    description: "MarketInefficiency.structural_barrier is defined"
+    check: MarketInefficiency.structural_barrier != null
+
+# -----------------------------------------------------------------------------
+# add_checks — activated by routing_matrix.yaml modulation
+# Agent checks type_vector against routing_matrix at runtime
+# and appends relevant checks to the active checklist.
+# -----------------------------------------------------------------------------
+add_checks:
+
+  out_of_sample_design_emphasis:
+    trigger: "universe_scope == single"
+    description: >
+      단일 종목 전략은 in-sample t-stat 기준이 약하므로,
+      out-of-sample 설계 자체가 edge 존재의 핵심 근거가 됩니다.
+    gate_addition:
+      - id: G1_OOS
+        check: oos_design_documented == true
+
+  walk_forward_emphasis:
+    trigger: "universe_scope == concentrated"
+    description: >
+      집중 유니버스는 cross-sectional 유의성이 낮으므로
+      walk-forward 결과가 edge existence의 주 근거가 됩니다.
+    gate_addition:
+      - id: G1_WF
+        check: walk_forward_plan_documented == true
+
+  regime_sensitivity:
+    trigger: "decision_cadence == quarterly_plus"
+    description: >
+      중장기 전략은 regime 변화에 민감합니다.
+      Edge가 특정 macro regime에만 작동하는지 확인이 필요합니다.
+    gate_addition:
+      - id: G1_RS
+        check: regime_dependency_assessed == true
+
+  cointegration_stability:
+    description: >
+      Stat-arb 전략은 관계의 안정성이 edge 존재의 핵심 전제입니다.
+      페어 관계가 우연한 상관이 아니라 구조적으로 유지되는지 점검해야 합니다.
+    gate_addition:
+      - id: G1_CS
+        check: cointegration_stability_assessed == true
+
+  spread_stationarity:
+    description: >
+      Stat-arb spread가 mean-reverting 구조인지 확인되지 않으면
+      비효율이 아니라 단순 추세 분리일 수 있습니다.
+    gate_addition:
+      - id: G1_SS
+        check: spread_stationarity_assessed == true
+
+  risk_premium_decomposition:
+    description: >
+      Carry나 risk-premium 전략은 보상이 어디서 오는지 분해되어야
+      구조적 edge와 단순 레버리지 노출을 구분할 수 있습니다.
+    gate_addition:
+      - id: G1_RPD
+        check: risk_premium_decomposition_documented == true
+
+  beta_neutrality_assumption:
+    description: >
+      Market-neutral 전제는 방향성 beta가 제거된 상태여야 의미가 있습니다.
+      beta 중립화 가정이 edge 서술에 포함되는지 확인이 필요합니다.
+    gate_addition:
+      - id: G1_BN
+        check: beta_neutrality_assessed == true
+
+# -----------------------------------------------------------------------------
+# Agent behavior
+# -----------------------------------------------------------------------------
+agent:
+  goal: >
+    Fill all required entity properties through structured dialogue.
+    Operate in two modes depending on user response:
+    question_mode (default) and proposal_mode (when user is stuck).
+
+  modes:
+    question_mode:
+      trigger: default
+      behavior: >
+        Ask one targeted question per unresolved KG node.
+        Surface assumptions — do not request implementation data.
+        Prefer "왜", "어떤 조건에서", "어떻게 판단하는가".
+
+    proposal_mode:
+      trigger: >
+        User responds with "모르겠다", "잘 모르겠다", or equivalent uncertainty.
+      behavior: >
+        Stop questioning. Switch to thinking-partner mode.
+        Share agent's perspective on what the node value likely is,
+        based on current KG state and general domain knowledge.
+        Present 2~3 concrete candidates with brief reasoning.
+        Ask user to react: confirm, modify, or reject each.
+      principle: >
+        Proposals are hypotheses, not answers.
+        User's reaction to a proposal is itself informative —
+        disagreement often reveals a more precise answer than open questions.
+      format: >
+        "제가 지금까지의 맥락으로 판단하면 이렇게 생각합니다:
+         [후보 A] — [근거]
+         [후보 B] — [근거]
+         [후보 C] — [근거]
+         어느 것이 가장 가깝거나, 전혀 다른 방향이 있나요?"
+
+  question_seeds:
+    - target: Hypothesis.claim
+      question: "이 전략이 수익을 내는 근본 이유는 무엇인가요? 시장이 무엇을 잘못하고 있기에 이 기회가 생기나요?"
+    - target: MarketInefficiency.persistence
+      question: "이 비효율이 지금까지 사라지지 않은 이유는 무엇인가요? 왜 더 큰 자금이 이미 이를 없애지 못했을까요?"
+    - target: Hypothesis.falsification_condition
+      question: "어떤 실증적 결과가 나오면 이 가설이 틀렸다고 판단하시겠어요?"
+    - target: Edge.type
+      question: "이 수익의 원천이 리스크 보상인가요, 시장 참여자의 편향인가요, 아니면 구조적 마찰인가요?"
+    - target: MarketInefficiency.decay_risk
+      question: "이 edge가 앞으로 사라진다면, 가장 그럴듯한 이유는 무엇일까요?"
+
+  blocking_behavior: >
+    If Hypothesis.falsifiable resolves to false, stop and explain:
+    "반증 불가능한 가설은 이후 모든 검증 단계의 근거가 될 수 없습니다.
+    가설을 반증 가능한 형태로 재구성해야 Stage 2로 넘어갈 수 있습니다."
+    Note: "모르겠다" ≠ falsifiable == false.
+    Unknown → proposal_mode. Explicitly false → blocking.

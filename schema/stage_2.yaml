@@ -1,0 +1,289 @@
+# =============================================================================
+# Stage 2: Decomposition
+# =============================================================================
+# Purpose:
+#   Empirically test whether the Stage 1 hypothesis survives decomposition
+#   and bias scrutiny. This is the reasoning -> evidence transition.
+#
+# Design principles:
+#   - Stage 2 stress-tests Stage 1. Each Check entity must reference which
+#     Stage 1 property (via `tests`) it challenges.
+#   - Gates split into PLAN (blocking for Stage 3) and EVIDENCE (advisory).
+#     Plan gates ensure "we know what to look for"; evidence gates ensure
+#     "we actually looked and it held up".
+#   - ReturnDecomposition is the central synthesizing artifact — it should
+#     conclude whether decomposition supports or contradicts Hypothesis.claim.
+#   - Check entities are generic: one entity per activated check name.
+#     Active check names are computed from routing modulation at runtime.
+# =============================================================================
+
+stage: 2
+name: decomposition
+depends_on: stage_1
+
+# -----------------------------------------------------------------------------
+# Deferred dimension resolved at this stage
+# (signal_source was deferred from Stage 0; resolving it re-computes active_checks)
+# -----------------------------------------------------------------------------
+resolves_deferred:
+
+  signal_source:
+    description: >
+      Primary data type driving signal generation.
+      This value determines which bias checks activate in Stage 2.
+    values: [price_volume, fundamental, alternative, macro, mixed]
+    agent_question: >
+      "What is the primary data source driving this strategy's signal?
+      Prices and volumes only, fundamental data, alternative data,
+      macroeconomic indicators, or a mix?"
+    side_effect: >
+      After resolution, routing modulation for signal_source is re-evaluated
+      and new Check entities may be activated.
+
+# -----------------------------------------------------------------------------
+# KG Entities
+# -----------------------------------------------------------------------------
+entities:
+
+  # --- Central synthesizing artifact ------------------------------------------
+  ReturnDecomposition:
+    description: >
+      Empirical decomposition of strategy returns.
+      Concludes whether decomposition evidence supports the Stage 1 hypothesis.
+    properties:
+      method:
+        type: enum
+        values:
+          - linear_regression
+          - event_study
+          - factor_regression
+          - attribution
+          - other
+        required: true
+      sample_period:
+        type: str
+        required: true
+        note: "Data period used, e.g. '2015-01 ~ 2024-12'"
+      market_beta_description:
+        type: str
+        required: true
+        note: "Market exposure measurement approach and key finding"
+      factor_components:
+        type: str
+        required: true
+        note: "Main factor exposures identified (or 'none material')"
+      residual_alpha:
+        type: str
+        required: true
+        note: "Residual after decomposition; include stat significance if known"
+      supports_hypothesis:
+        type: enum
+        values: [supports, contradicts, inconclusive]
+        required: true
+        note: "Conclusion on whether evidence aligns with Hypothesis.claim"
+      reasoning:
+        type: str
+        required: true
+
+  # --- Generic Check template -------------------------------------------------
+  # Each activated check name becomes its own Check-shaped entity in the KG.
+  # The entity key in kg_state.entities is the check name itself
+  # (e.g. entities["regime_sensitivity"]).
+  # Runtime allows entity updates for names in kg_state.active_checks["stage_2"]
+  # using this property schema.
+  Check:
+    description: >
+      Generic check entity. One per activated check name.
+      Each check must declare what Stage 1 claim it tests.
+    applies_to: "Any name in active_checks['stage_2']"
+    properties:
+      # ---- Plan fields (required for plan gate) --------------------------
+      tests:
+        type: str
+        required: true
+        gate_kind: plan
+        note: >
+          Stage 1 reference. e.g. 'Hypothesis.mechanism',
+          'Hypothesis.falsification_condition', 'Edge.horizon'
+      evidence_type:
+        type: enum
+        values: [attestation, quantitative, artifact_ref]
+        required: true
+        gate_kind: plan
+      criterion:
+        type: str
+        required: true
+        gate_kind: plan
+        note: >
+          Concrete pass/fail criterion.
+          Middle-ground strictness: the judgment must be unambiguous once
+          evidence arrives, but detailed methodology is not required.
+          Example (pass): "Bear-regime CAAR_20d should be >= 0%"
+          Example (fail): "Check if strategy is regime sensitive"
+      method:
+        type: str
+        required: true
+        gate_kind: plan
+        note: >
+          How the check will be / was performed. Sketch-level is acceptable.
+
+      # ---- Evidence fields (required for evidence gate) ------------------
+      evidence_summary:
+        type: str
+        required: false
+        gate_kind: evidence
+        note: "1-2 sentence summary of what was found"
+      metrics:
+        type: str
+        required: false
+        gate_kind: evidence
+        note: >
+          Required when evidence_type == 'quantitative'.
+          Structured as a compact text blob, e.g.
+          'CAAR_20d_bull=+2.3%, CAAR_20d_bear=-0.8%, t_stat=2.1'
+      artifact_ref:
+        type: str
+        required: false
+        gate_kind: evidence
+        note: >
+          Required when evidence_type == 'artifact_ref'.
+          Path, URL, or commit hash pointing to the evidence.
+      passes_criterion:
+        type: bool
+        required: false
+        gate_kind: evidence
+      reasoning:
+        type: str
+        required: false
+        gate_kind: evidence
+
+# -----------------------------------------------------------------------------
+# Relationships (edges referenced in prompt context)
+# -----------------------------------------------------------------------------
+relationships:
+  - "Check --tests--> Stage1_entity.property"
+  - "ReturnDecomposition --supports/contradicts--> Hypothesis.claim"
+
+# -----------------------------------------------------------------------------
+# Gate conditions
+# Plan gates are BLOCKING for Stage 3 advance.
+# Evidence gates are ADVISORY — they can remain pending and be filled later.
+# -----------------------------------------------------------------------------
+gate_conditions:
+
+  # --- Plan gates -------------------------------------------------------------
+  - id: G2_P0
+    kind: plan
+    description: "signal_source is resolved"
+    check: "kg_state.deferred.signal_source is defined"
+
+  - id: G2_P1
+    kind: plan
+    description: "ReturnDecomposition.method is defined"
+    check: "ReturnDecomposition.method != null"
+
+  - id: G2_P2
+    kind: plan
+    description: "ReturnDecomposition.sample_period is defined"
+    check: "ReturnDecomposition.sample_period != null"
+
+  - id: G2_P3
+    kind: plan
+    description: >
+      Every activated Check has tests, evidence_type, criterion, method defined.
+    check: "all plan fields defined for each active Check entity"
+
+  # --- Evidence gates (advisory) ---------------------------------------------
+  - id: G2_E1
+    kind: evidence
+    description: >
+      ReturnDecomposition evidence fields filled and supports_hypothesis judged.
+    check: >
+      ReturnDecomposition.market_beta_description,
+      .factor_components, .residual_alpha, .supports_hypothesis, .reasoning
+      all defined
+    advisory: true
+
+  - id: G2_E2
+    kind: evidence
+    description: >
+      Every activated Check has evidence_summary, passes_criterion, reasoning.
+      Type-specific field required depending on evidence_type:
+      quantitative -> metrics; artifact_ref -> artifact_ref.
+    check: "all evidence fields defined for each active Check entity"
+    advisory: true
+
+# -----------------------------------------------------------------------------
+# Agent behavior
+# -----------------------------------------------------------------------------
+agent:
+  goal: >
+    Turn Stage 1's reasoning into a concrete, testable decomposition plan.
+    Fill evidence where data is available; leave remaining checks as
+    'evidence_pending' explicitly. Advance to Stage 3 once PLAN gates pass.
+
+  stage_flow:
+    - step: 1
+      action: "Resolve signal_source via update_deferred"
+      reason: "Triggers routing re-computation of active checks"
+    - step: 2
+      action: "For each activated Check: establish plan (tests, evidence_type, criterion, method)"
+      reason: "Plan gates require this before Stage 3 advance"
+    - step: 3
+      action: "Establish ReturnDecomposition.method and .sample_period"
+      reason: "Defines how decomposition will be / was performed"
+    - step: 4
+      action: "For checks where evidence is available: fill evidence_summary, metrics/artifact_ref, passes_criterion, reasoning"
+    - step: 5
+      action: "For checks where evidence is not yet available: leave evidence fields null"
+      reason: "Evidence gates are advisory; can be resolved later"
+    - step: 6
+      action: "Fill ReturnDecomposition evidence fields if data is available"
+    - step: 7
+      action: "Call advance_stage when all PLAN gates pass"
+
+  modes:
+    question_mode:
+      trigger: default
+      behavior: >
+        Ask one targeted question per unresolved plan field or evidence field.
+        For Check entities, ask questions in this order:
+        tests -> evidence_type -> criterion -> method -> evidence fields.
+
+    proposal_mode:
+      trigger: "User says 'I don't know' or 'not sure'"
+      behavior: >
+        Present 2-3 candidate values grounded in the Stage 1 KG.
+        For a Check's `tests`, propose which Stage 1 property it most
+        plausibly challenges.
+        For `criterion`, propose concrete pass/fail thresholds.
+
+    eda_mode:
+      trigger: >
+        User says 'no data yet' or equivalent for a quantitative evidence field.
+      behavior: >
+        1. Do NOT block the stage.
+        2. Confirm the check's plan fields are filled (this is what matters now).
+        3. Explicitly state: "This check will remain as evidence_pending.
+           You can return to it after running the analysis."
+        4. Optionally propose the specific analysis to run with:
+           - metric to compute
+           - data needed
+           - interpretation criterion
+      note: >
+        evidence_pending is not a new gate status — it simply means the
+        evidence gate is not yet pass. The evidence gate is advisory.
+
+  question_seeds:
+    - target: "deferred.signal_source"
+      question: "What is the primary data source driving this strategy's signal?"
+    - target: "Check.tests"
+      question: "Which Stage 1 claim would this check invalidate if it failed?"
+    - target: "Check.evidence_type"
+      question: "Is this check verified by a documented claim (attestation), a measured metric (quantitative), or by reference to external output (artifact_ref)?"
+    - target: "Check.criterion"
+      question: "What result would make this check pass? What would make it fail?"
+    - target: "ReturnDecomposition.method"
+      question: "How do you plan to decompose returns? Linear regression against factors, event study, attribution, or something else?"
+    - target: "ReturnDecomposition.supports_hypothesis"
+      question: "Based on the decomposition result, does the evidence support, contradict, or leave inconclusive the Stage 1 hypothesis?"

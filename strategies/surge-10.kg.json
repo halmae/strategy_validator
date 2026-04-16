@@ -1,0 +1,93 @@
+{
+  "stage": 1,
+  "type_vector": {
+    "alpha_family": "event_driven",
+    "market_scope": "korea",
+    "decision_cadence": "intraday",
+    "execution_mode": "systematic",
+    "exposure_structure": "long_only",
+    "asset_class": "equity"
+  },
+  "entities": {
+    "Hypothesis": {
+      "claim": "Market participants' search for stocks associated with the day's trending theme creates temporary inefficiencies.",
+      "mechanism": "unknown",
+      "falsification_condition": "Backtest results using minute data do not show statistically meaningful expected returns or Sharpe ratio.",
+      "falsifiable": true
+    },
+    "MarketInefficiency": {
+      "persistence": "unknown",
+      "structural_barrier": "behavioral"
+    },
+    "Edge": {
+      "type": "behavioral",
+      "direction": "long",
+      "horizon": "1 hour"
+    }
+  },
+  "gates": {
+    "G1_1": {
+      "status": "pass",
+      "reason": "Edge.type is defined."
+    },
+    "G1_2": {
+      "status": "pass",
+      "reason": "Edge.direction is defined."
+    },
+    "G1_3": {
+      "status": "pass",
+      "reason": "Edge.horizon is consistent with decision_cadence."
+    },
+    "G1_4": {
+      "status": "pass",
+      "reason": "Hypothesis.claim is defined."
+    },
+    "G1_5": {
+      "status": "pass",
+      "reason": "Hypothesis.mechanism is defined."
+    },
+    "G1_6": {
+      "status": "pass",
+      "reason": "Hypothesis is falsifiable."
+    },
+    "G1_7": {
+      "status": "pass",
+      "reason": "Hypothesis.falsification_condition is defined."
+    },
+    "G1_8": {
+      "status": "pass",
+      "reason": "MarketInefficiency.persistence is defined."
+    },
+    "G1_9": {
+      "status": "pass",
+      "reason": "MarketInefficiency.structural_barrier is defined."
+    },
+    "G1_WF": {
+      "status": "pass",
+      "reason": "User confirmed a plan for walk-forward testing after initial edge validation."
+    }
+  },
+  "deferred": {
+    "universe_scope": "concentrated",
+    "universe_anchor": "KOSPI"
+  },
+  "notes": [
+    {
+      "stage": 1,
+      "type": "observation",
+      "note": "Universe selection is based on MktCap. This information is relevant for Stage 1 but does not directly map to a KG entity or gate in the current schema. It may be relevant for later stages concerning universe definition and constraints."
+    }
+  ],
+  "active_checks": {
+    "stage_1": [
+      "walk_forward_emphasis"
+    ]
+  },
+  "completed_stages": [
+    0,
+    1
+  ],
+  "workflow_complete": true,
+  "out_of_scope": false,
+  "out_of_scope_reason": ""
+}

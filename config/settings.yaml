@@ -1,0 +1,16 @@
+# =============================================================================
+# Validation Agent Settings
+# =============================================================================
+
+model:
+  provider: google                  # google | anthropic (future)
+  name: gemini-2.5-flash-lite            # model identifier
+  max_output_tokens: 2048
+  temperature: 0.2                  # lower = more consistent/deterministic
+
+language: english                   # language for agent responses
+
+paths:
+  schema_dir: schema
+  strategies_dir: strategies
+  prompts_dir: config/prompts

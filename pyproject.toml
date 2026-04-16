@@ -1,0 +1,15 @@
+[project]
+name = "validation-agent"
+version = "0.1.0"
+description = "Quant strategy validation agent"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "google-genai>=1.0.0",
+    "pyyaml>=6.0",
+    "rich>=13.0",
+    "python-dotenv>=1.0.0",
+]
+
+[project.scripts]
+validate = "main:main"

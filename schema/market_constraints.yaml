@@ -1,0 +1,108 @@
+# =============================================================================
+# Market Constraints Reference Schema
+# =============================================================================
+# Purpose:
+#   Define market-specific structural constraints.
+#   Consumed by the agent at routing time — not embedded in stage schemas.
+#
+# Design principle:
+#   - Adding a new market = adding a new entry here only
+#   - Stage schemas and routing logic remain unchanged
+#   - Constraints are descriptive facts, not validation rules
+#     (rules that use these constraints live in each stage schema)
+# =============================================================================
+
+markets:
+
+  KOSPI:
+    label: "Korea Stock Price Index"
+    region: KR
+    currency: KRW
+    timezone: Asia/Seoul
+    trading_hours: "09:00~15:30"
+    settlement: T+2
+    price_limit: 0.30           # daily ±30%
+    short_selling:
+      available: true
+      instruments: [index_futures, etf, individual_stock]
+      note: "Individual stock short-selling subject to periodic regulatory restrictions"
+    tick_size: variable          # price-dependent tick size
+    data_availability:
+      price_volume:  high
+      fundamental:   medium      # point-in-time quality varies by vendor
+      alternative:   low
+    notes:
+      - "Separate opening/closing auction periods affect HF strategies"
+      - "Program trading disclosure rules above threshold"
+
+  KOSDAQ:
+    label: "Korea Securities Dealers Automated Quotation"
+    region: KR
+    currency: KRW
+    timezone: Asia/Seoul
+    trading_hours: "09:00~15:30"
+    settlement: T+2
+    price_limit: 0.30
+    short_selling:
+      available: true
+      instruments: [etf, individual_stock]
+      note: "More frequently subject to short-selling bans vs. KOSPI"
+    tick_size: variable
+    data_availability:
+      price_volume:  high
+      fundamental:   low         # smaller companies, less coverage
+      alternative:   low
+    notes:
+      - "Lower liquidity on average vs. KOSPI — execution impact more significant"
+      - "Higher idiosyncratic risk; universe_scope: broad may require liquidity filter"
+
+  SP500:
+    label: "S&P 500"
+    region: US
+    currency: USD
+    timezone: America/New_York
+    trading_hours: "09:30~16:00"
+    settlement: T+1
+    price_limit: null            # circuit breakers at index level, not per-stock
+    short_selling:
+      available: true
+      instruments: [direct, etf, options, futures]
+      note: "Locate requirement; cost varies by name"
+    tick_size: 0.01
+    data_availability:
+      price_volume:  high
+      fundamental:   high
+      alternative:   high
+    notes:
+      - "Pre/post-market trading exists but liquidity thin"
+      - "Reg SHO uptick rule applies"
+
+  NASDAQ:
+    label: "NASDAQ"
+    region: US
+    currency: USD
+    timezone: America/New_York
+    trading_hours: "09:30~16:00"
+    settlement: T+1
+    price_limit: null
+    short_selling:
+      available: true
+      instruments: [direct, etf, options, futures]
+    tick_size: 0.01
+    data_availability:
+      price_volume:  high
+      fundamental:   high
+      alternative:   high
+    notes:
+      - "Higher tech/growth concentration; factor exposure differs from SP500"
+      - "Higher average volatility vs. SP500"
+
+  global:
+    label: "Multi-market / Global"
+    region: multi
+    currency: multi
+    timezone: multi
+    notes:
+      - "Constraints are the union of all constituent markets"
+      - "FX risk and cross-market settlement mismatch must be addressed in Stage 5"
+      - "Data source availability must be verified per market"
