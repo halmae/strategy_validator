@@ -40,11 +40,13 @@ def sync_runtime_state(stage: int, schema: dict, routing: dict, kg_state: KGStat
     if stage == 1:
         _sync_stage_1_checks(schema, routing, kg_state)
         _sync_stage_1_gates(schema, kg_state)
+        _sync_stage_relations(stage, schema, kg_state)
         return
 
     if stage == 2:
         _sync_stage_2_checks(routing, kg_state)
         _sync_stage_2_gates(schema, kg_state)
+        _sync_stage_relations(stage, schema, kg_state)
 
 
 def validate_type_vector_update(schema: dict, dimension: str, value: Any) -> str:
@@ -394,6 +396,8 @@ def _ensure_stage_1_ready(schema: dict, kg_state: KGState) -> None:
             f"Stage 1 is incomplete. Gates not passed: {unresolved}"
         )
 
+    _ensure_required_relations(1, schema, kg_state)
+
 
 def _required_string_status(value: Any) -> str:
     return "pass" if _is_meaningful_string(value) else "pending"
@@ -429,6 +433,221 @@ def _active_gate_ids_for_stage(stage: int, schema: dict, kg_state: KGState) -> l
                 active_gate_ids.append(gate_id)
 
     return active_gate_ids
+
+
+def _sync_stage_relations(stage: int, schema: dict, kg_state: KGState) -> None:
+    """Derive stage-scoped KG relations from the current entity/property state."""
+    relation_specs = schema.get("relationships", []) or []
+    derived: list[dict] = []
+
+    for spec in relation_specs:
+        kind = spec.get("kind", "fixed")
+        if kind == "fixed":
+            relation = _derive_fixed_relation(stage, spec, kg_state)
+            if relation is not None:
+                derived.append(relation)
+        elif kind == "active_check_field":
+            derived.extend(_derive_active_check_relations(stage, spec, kg_state))
+        elif kind == "mapped_field_predicate":
+            relation = _derive_mapped_field_relation(stage, spec, kg_state)
+            if relation is not None:
+                derived.append(relation)
+
+    kg_state.set_stage_relations(stage, _dedupe_relations(derived))
+
+
+def _derive_fixed_relation(stage: int, spec: dict, kg_state: KGState) -> dict | None:
+    subject = spec.get("subject")
+    predicate = spec.get("predicate")
+    object_name = spec.get("object")
+    object_ref = spec.get("object_ref")
+
+    if not subject or not predicate or not _entity_exists(kg_state, subject):
+        return None
+
+    relation = {
+        "stage": stage,
+        "subject": subject,
+        "predicate": predicate,
+    }
+
+    if object_name:
+        if not _relation_object_ready(kg_state, object_name):
+            return None
+        relation["object"] = object_name
+        return relation
+
+    if object_ref:
+        value = _entity_field_value(kg_state, object_ref)
+        if not _nonempty(value):
+            return None
+        relation["object"] = object_ref
+        relation["object_value"] = value
+        return relation
+
+    return None
+
+
+def _derive_active_check_relations(stage: int, spec: dict, kg_state: KGState) -> list[dict]:
+    predicate = spec.get("predicate")
+    field_name = spec.get("field")
+    if not predicate or not field_name:
+        return []
+
+    derived: list[dict] = []
+    for check_name in kg_state.active_checks.get(f"stage_{stage}", []):
+        field_value = kg_state.entities.get(check_name, {}).get(field_name)
+        if not _nonempty(field_value):
+            continue
+        derived.append(
+            {
+                "stage": stage,
+                "subject": check_name,
+                "predicate": predicate,
+                "object": str(field_value).strip(),
+            }
+        )
+
+    return derived
+
+
+def _derive_mapped_field_relation(stage: int, spec: dict, kg_state: KGState) -> dict | None:
+    subject = spec.get("subject")
+    field_name = spec.get("predicate_field")
+    predicate_values = spec.get("predicate_values", {})
+    object_name = spec.get("object")
+    object_ref = spec.get("object_ref")
+
+    if not subject or not field_name or not _entity_exists(kg_state, subject):
+        return None
+
+    field_value = kg_state.entities.get(subject, {}).get(field_name)
+    if not _nonempty(field_value):
+        return None
+
+    predicate = predicate_values.get(str(field_value).strip())
+    if not predicate:
+        return None
+
+    relation = {
+        "stage": stage,
+        "subject": subject,
+        "predicate": predicate,
+    }
+
+    if object_name:
+        if not _relation_object_ready(kg_state, object_name):
+            return None
+        relation["object"] = object_name
+        return relation
+
+    if object_ref:
+        value = _entity_field_value(kg_state, object_ref)
+        if not _nonempty(value):
+            return None
+        relation["object"] = object_ref
+        relation["object_value"] = value
+        return relation
+
+    return None
+
+
+def _ensure_required_relations(stage: int, schema: dict, kg_state: KGState) -> None:
+    missing: list[str] = []
+    active_checks = kg_state.active_checks.get(f"stage_{stage}", [])
+
+    for spec in schema.get("relationships", []) or []:
+        kind = spec.get("kind", "fixed")
+        if kind == "fixed" and spec.get("required"):
+            if not _has_stage_relation(
+                kg_state,
+                stage,
+                subject=spec.get("subject"),
+                predicate=spec.get("predicate"),
+                object_name=spec.get("object") or spec.get("object_ref"),
+            ):
+                missing.append(
+                    f"{spec.get('subject')} --{spec.get('predicate')}--> "
+                    f"{spec.get('object') or spec.get('object_ref')}"
+                )
+        elif kind == "active_check_field" and spec.get("required_per_active_check"):
+            predicate = spec.get("predicate")
+            field_name = spec.get("field")
+            for check_name in active_checks:
+                field_value = kg_state.entities.get(check_name, {}).get(field_name)
+                if not _nonempty(field_value):
+                    missing.append(f"{check_name} --{predicate}--> <unresolved>")
+                    continue
+                if not _has_stage_relation(
+                    kg_state,
+                    stage,
+                    subject=check_name,
+                    predicate=predicate,
+                    object_name=str(field_value).strip(),
+                ):
+                    missing.append(
+                        f"{check_name} --{predicate}--> {str(field_value).strip()}"
+                    )
+
+    if missing:
+        raise RuntimeValidationError(
+            "Required stage relations are missing: " + "; ".join(missing)
+        )
+
+
+def _has_stage_relation(
+    kg_state: KGState,
+    stage: int,
+    subject: str | None,
+    predicate: str | None,
+    object_name: str | None,
+) -> bool:
+    for relation in kg_state.relations:
+        if relation.get("stage") != stage:
+            continue
+        if relation.get("subject") != subject:
+            continue
+        if relation.get("predicate") != predicate:
+            continue
+        if relation.get("object") != object_name:
+            continue
+        return True
+    return False
+
+
+def _dedupe_relations(relations: list[dict]) -> list[dict]:
+    seen: set[tuple[Any, ...]] = set()
+    ordered: list[dict] = []
+    for relation in relations:
+        key = (
+            relation.get("stage"),
+            relation.get("subject"),
+            relation.get("predicate"),
+            relation.get("object"),
+            relation.get("object_value"),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        ordered.append(relation)
+    return ordered
+
+
+def _entity_exists(kg_state: KGState, entity_name: str) -> bool:
+    return bool(kg_state.entities.get(entity_name))
+
+
+def _relation_object_ready(kg_state: KGState, object_name: str) -> bool:
+    if "." in object_name:
+        return _nonempty(_entity_field_value(kg_state, object_name))
+    return _entity_exists(kg_state, object_name)
+
+
+def _entity_field_value(kg_state: KGState, ref: str) -> Any:
+    if "." not in ref:
+        return None
+    entity_name, field_name = ref.split(".", 1)
+    return kg_state.entities.get(entity_name, {}).get(field_name)
 
 
 def _horizon_consistency(decision_cadence: Any, horizon: Any) -> tuple[str, str]:
@@ -730,6 +949,8 @@ def _ensure_stage_2_ready(schema: dict, kg_state: KGState) -> None:
             + ", ".join(unresolved_plan)
             + ". Evidence gates are advisory and may remain pending."
         )
+
+    _ensure_required_relations(2, schema, kg_state)
 
 
 def _nonempty(value: Any) -> bool:

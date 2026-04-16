@@ -127,12 +127,24 @@ entities:
         note: "Known threats to persistence (crowding, regime change, regulation)"
 
 # -----------------------------------------------------------------------------
-# Relationships
+# Relationships / fixed predicates
 # -----------------------------------------------------------------------------
 relationships:
-  - Edge --grounded_in--> Hypothesis
-  - Edge --exploits--> MarketInefficiency
-  - Hypothesis --explains--> MarketInefficiency.persistence
+  - kind: fixed
+    predicate: grounded_in
+    subject: Edge
+    object: Hypothesis
+    required: true
+  - kind: fixed
+    predicate: exploits
+    subject: Edge
+    object: MarketInefficiency
+    required: true
+  - kind: fixed
+    predicate: explains
+    subject: Hypothesis
+    object_ref: MarketInefficiency.persistence
+    required: false
 
 # -----------------------------------------------------------------------------
 # Gate conditions

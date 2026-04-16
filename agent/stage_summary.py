@@ -48,6 +48,7 @@ def build_stage_summary(stage: int, schema: dict, kg_state: KGState) -> dict:
         "name": schema.get("name", f"stage_{stage}"),
         "objective": _OBJECTIVES.get(stage, ""),
         "resolved_facts": _resolved_facts(stage, kg_state),
+        "relations": _stage_relations(stage, kg_state),
         "key_rationale": _key_rationale(stage, kg_state),
         "active_checks": list(kg_state.active_checks.get(f"stage_{stage}", [])),
         "gates": _stage_gate_summary(stage, kg_state),
@@ -196,6 +197,26 @@ def _stage_gate_summary(stage: int, kg_state: KGState) -> dict:
         bucket.append({"id": gate_id, "reason": gate_state.get("reason", "")})
 
     return summary
+
+
+def _stage_relations(stage: int, kg_state: KGState) -> list[dict]:
+    relations = [
+        {
+            key: value
+            for key, value in relation.items()
+            if key != "stage"
+        }
+        for relation in kg_state.relations
+        if relation.get("stage") == stage
+    ]
+    return sorted(
+        relations,
+        key=lambda item: (
+            item.get("subject", ""),
+            item.get("predicate", ""),
+            item.get("object", ""),
+        ),
+    )
 
 
 def _meaningful_fields(source: dict, field_names: tuple[str, ...]) -> dict:

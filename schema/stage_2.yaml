@@ -158,11 +158,22 @@ entities:
         gate_kind: evidence
 
 # -----------------------------------------------------------------------------
-# Relationships (edges referenced in prompt context)
+# Relationships / fixed predicates
 # -----------------------------------------------------------------------------
 relationships:
-  - "Check --tests--> Stage1_entity.property"
-  - "ReturnDecomposition --supports/contradicts--> Hypothesis.claim"
+  - kind: active_check_field
+    predicate: tests
+    field: tests
+    required_per_active_check: true
+  - kind: mapped_field_predicate
+    subject: ReturnDecomposition
+    predicate_field: supports_hypothesis
+    predicate_values:
+      supports: supports
+      contradicts: contradicts
+      inconclusive: inconclusive
+    object_ref: Hypothesis.claim
+    required: false
 
 # -----------------------------------------------------------------------------
 # Gate conditions

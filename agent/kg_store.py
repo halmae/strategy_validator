@@ -34,6 +34,10 @@ class KGState:
     # e.g. [{"stage": 2, "type": "risk", "note": "informed trading decay risk"}]
     notes: list = field(default_factory=list)
 
+    # Derived KG relations with stage-scoped fixed predicates
+    # e.g. [{"stage": 1, "subject": "Edge", "predicate": "grounded_in", "object": "Hypothesis"}]
+    relations: list = field(default_factory=list)
+
     # add_checks activated by routing modulation
     # e.g. {"stage_2": ["regime_sensitivity", "event_definition_consistency"]}
     active_checks: dict = field(default_factory=dict)
@@ -62,6 +66,11 @@ class KGState:
 
     def add_note(self, stage: int, note_type: str, note: str) -> None:
         self.notes.append({"stage": stage, "type": note_type, "note": note})
+
+    def set_stage_relations(self, stage: int, relations: list[dict]) -> None:
+        retained = [item for item in self.relations if item.get("stage") != stage]
+        retained.extend(relations)
+        self.relations = retained
 
     def add_check(self, stage_key: str, check_id: str) -> None:
         if stage_key not in self.active_checks:

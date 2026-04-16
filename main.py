@@ -154,18 +154,25 @@ def main() -> None:
         console.print(f"[red]Schema error: {e}[/red]")
         sys.exit(1)
 
-    sync_runtime_state(kg_state.stage, schema, routing, kg_state)
-    backfilled_summaries = False
+    synced_stages = sorted(
+        {
+            stage_id
+            for stage_id in [*kg_state.completed_stages, kg_state.stage]
+            if stage_id in STAGE_SCHEMA_MAP
+        }
+    )
+    for stage_id in synced_stages:
+        stage_schema = schema if stage_id == kg_state.stage else schema_for_stage(stage_id)
+        sync_runtime_state(stage_id, stage_schema, routing, kg_state)
+
+    summaries_updated = False
     for completed_stage in kg_state.completed_stages:
-        stage_key = f"stage_{completed_stage}"
-        if stage_key in kg_state.stage_summaries:
-            continue
-        completed_schema = schema_for_stage(completed_stage)
+        completed_schema = schema if completed_stage == kg_state.stage else schema_for_stage(completed_stage)
         kg_state.set_stage_summary(
             completed_stage,
             build_stage_summary(completed_stage, completed_schema, kg_state),
         )
-        backfilled_summaries = True
+        summaries_updated = True
 
     if resuming:
         console.print("[yellow]Resuming previous session.[/yellow]")
@@ -174,7 +181,7 @@ def main() -> None:
         console.print("[green]Starting new validation session.[/green]")
         console.print()
 
-    if backfilled_summaries:
+    if summaries_updated:
         save_state(strategy_path, kg_state, session_contents or [])
 
     # Initial trigger — from config/prompts/
@@ -237,12 +244,7 @@ def main() -> None:
 
         contents = updated_contents
 
-        newly_completed = [
-            stage_id
-            for stage_id in kg_state.completed_stages
-            if stage_id not in completed_before
-        ]
-        for completed_stage in newly_completed:
+        for completed_stage in kg_state.completed_stages:
             completed_schema = turn_schema
             if completed_stage != turn_stage:
                 completed_schema = schema_for_stage(completed_stage)
@@ -251,6 +253,11 @@ def main() -> None:
                 build_stage_summary(completed_stage, completed_schema, kg_state),
             )
 
+        newly_completed = [
+            stage_id
+            for stage_id in kg_state.completed_stages
+            if stage_id not in completed_before
+        ]
         if newly_completed:
             contents = prune_session_contents(contents, keep_recent_messages=8)
 

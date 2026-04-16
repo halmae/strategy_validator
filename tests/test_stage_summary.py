@@ -57,6 +57,37 @@ class StageSummaryTests(unittest.TestCase):
         self.assertEqual(summary["gates"]["passed"][0]["id"], "G1_1")
         self.assertIn("Walk-forward plan still needs detail.", summary["open_questions"])
 
+    def test_stage_summary_includes_stage_relations(self) -> None:
+        kg_state = KGState(
+            relations=[
+                {
+                    "stage": 1,
+                    "subject": "Edge",
+                    "predicate": "grounded_in",
+                    "object": "Hypothesis",
+                },
+                {
+                    "stage": 2,
+                    "subject": "ReturnDecomposition",
+                    "predicate": "supports",
+                    "object": "Hypothesis.claim",
+                },
+            ]
+        )
+
+        summary = build_stage_summary(1, {"name": "edge_existence"}, kg_state)
+
+        self.assertEqual(
+            summary["relations"],
+            [
+                {
+                    "subject": "Edge",
+                    "predicate": "grounded_in",
+                    "object": "Hypothesis",
+                }
+            ],
+        )
+
     def test_format_stage_summaries_orders_by_stage(self) -> None:
         payload = {
             "stage_2": {"stage": 2, "name": "decomposition"},

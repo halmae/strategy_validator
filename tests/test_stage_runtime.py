@@ -162,6 +162,24 @@ class StageRuntimeTests(unittest.TestCase):
         self.assertEqual(kg_state.stage, 2)
         self.assertFalse(kg_state.workflow_complete)
         self.assertIn(1, kg_state.completed_stages)
+        self.assertIn(
+            {
+                "stage": 1,
+                "subject": "Edge",
+                "predicate": "grounded_in",
+                "object": "Hypothesis",
+            },
+            kg_state.relations,
+        )
+        self.assertIn(
+            {
+                "stage": 1,
+                "subject": "Edge",
+                "predicate": "exploits",
+                "object": "MarketInefficiency",
+            },
+            kg_state.relations,
+        )
 
     def test_stage_2_with_no_active_checks_can_advance(self) -> None:
         kg_state = KGState(
@@ -249,6 +267,64 @@ class StageRuntimeTests(unittest.TestCase):
         self.assertIn("Validation error", result)
         self.assertEqual(kg_state.stage, 2)
         self.assertFalse(kg_state.workflow_complete)
+
+    def test_stage_2_derives_fixed_predicates_from_checks_and_decomposition(self) -> None:
+        kg_state = KGState(
+            stage=2,
+            type_vector={
+                "alpha_family": "event_driven",
+                "exposure_structure": "long_only",
+                "asset_class": "equity",
+                "market_scope": "korea",
+                "decision_cadence": "intraday",
+                "execution_mode": "systematic",
+            },
+            deferred={"signal_source": "price_volume"},
+            entities={
+                "Hypothesis": {
+                    "claim": "Theme chasing creates temporary inefficiencies.",
+                },
+                "ReturnDecomposition": {
+                    "method": "event_study",
+                    "sample_period": "2020-01 ~ 2024-12",
+                    "supports_hypothesis": "supports",
+                },
+                "event_definition_consistency": {
+                    "tests": "Hypothesis.mechanism",
+                    "evidence_type": "attestation",
+                    "criterion": "Event labels are stable across samples.",
+                    "method": "Manual review of event tagging rules.",
+                },
+                "look_ahead_event_timing": {
+                    "tests": "Hypothesis.falsification_condition",
+                    "evidence_type": "attestation",
+                    "criterion": "No future timestamps leak into event windows.",
+                    "method": "Verify event timestamps against source system logs.",
+                },
+            },
+        )
+
+        sync_runtime_state(2, self.stage_2_schema, self.routing, kg_state)
+
+        self.assertIn(
+            {
+                "stage": 2,
+                "subject": "event_definition_consistency",
+                "predicate": "tests",
+                "object": "Hypothesis.mechanism",
+            },
+            kg_state.relations,
+        )
+        self.assertIn(
+            {
+                "stage": 2,
+                "subject": "ReturnDecomposition",
+                "predicate": "supports",
+                "object": "Hypothesis.claim",
+                "object_value": "Theme chasing creates temporary inefficiencies.",
+            },
+            kg_state.relations,
+        )
 
 
 if __name__ == "__main__":
