@@ -6,7 +6,7 @@
 ## Stage Schema
 {schema_yaml}
 
-## Routing Rules
+## Routing Snapshot
 {routing_yaml}
 
 ## Completed Stage Summaries

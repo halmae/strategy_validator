@@ -1,4 +1,4 @@
-"""Stage handoff summaries used to compress session context."""
+"""Stage handoff summaries and prompt-facing KG compaction helpers."""
 from __future__ import annotations
 
 import json
@@ -19,43 +19,42 @@ _PLACEHOLDER_VALUES = {
     "to be decided",
 }
 
-_OBJECTIVES = {
-    0: "Resolve the strategy type vector and scope eligibility.",
-    1: "Establish a falsifiable edge hypothesis and the market inefficiency it exploits.",
-    2: "Turn the Stage 1 hypothesis into a concrete decomposition plan and bias-check plan.",
-}
-
-_NEXT_STAGE_HANDOFF = {
-    0: [
-        "Resolve Stage 1 deferred fields such as universe scope and anchor.",
-        "Pin down the edge claim, mechanism, falsification condition, and inefficiency persistence.",
-    ],
-    1: [
-        "Resolve signal_source first because it activates Stage 2 checks.",
-        "Define ReturnDecomposition.method and sample_period.",
-        "For each active Stage 2 check, fill tests, evidence_type, criterion, and method.",
-    ],
-    2: [
-        "Use the Stage 2 plan to drive signal-quality validation once Stage 3 exists.",
-        "Evidence gates that remain pending should be revisited after running the planned analyses.",
-    ],
-}
-
 
 def build_stage_summary(stage: int, schema: dict, kg_state: KGState) -> dict:
-    summary = {
+    summary_config = schema.get("summary", {})
+    return {
         "stage": stage,
         "name": schema.get("name", f"stage_{stage}"),
-        "objective": _OBJECTIVES.get(stage, ""),
+        "objective": summary_config.get("objective", ""),
         "resolved_facts": _resolved_facts(stage, kg_state),
-        "relations": _stage_relations(stage, kg_state),
+        "relations": _stage_relations(stage, kg_state, scope="semantic"),
         "key_rationale": _key_rationale(stage, kg_state),
         "active_checks": list(kg_state.active_checks.get(f"stage_{stage}", [])),
         "gates": _stage_gate_summary(stage, kg_state),
         "open_questions": _open_questions(stage, kg_state),
-        "next_stage_handoff": list(_NEXT_STAGE_HANDOFF.get(stage, [])),
+        "next_stage_handoff": list(summary_config.get("next_stage_handoff", [])),
     }
-    return summary
+
+
+def build_prompt_kg_snapshot(stage: int, kg_state: KGState) -> dict:
+    snapshot = {
+        "stage": stage,
+        "type_vector": dict(kg_state.type_vector),
+        "completed_stages": list(kg_state.completed_stages),
+        "deferred": dict(kg_state.deferred),
+        "entities": _prompt_entities(stage, kg_state),
+        "active_checks": list(kg_state.active_checks.get(f"stage_{stage}", [])),
+        "relations": _stage_relations(stage, kg_state, scope="semantic"),
+        "gates": _prompt_gate_view(stage, kg_state),
+        "notes": [
+            note for note in kg_state.notes
+            if note.get("stage") in (stage, stage - 1)
+        ],
+        "workflow_complete": kg_state.workflow_complete,
+        "out_of_scope": kg_state.out_of_scope,
+        "out_of_scope_reason": kg_state.out_of_scope_reason,
+    }
+    return _strip_empty(snapshot)
 
 
 def format_stage_summaries(stage_summaries: dict) -> str:
@@ -116,14 +115,7 @@ def _resolved_facts(stage: int, kg_state: KGState) -> dict:
             "signal_source": kg_state.deferred.get("signal_source"),
             "return_decomposition": _meaningful_fields(
                 kg_state.entities.get("ReturnDecomposition", {}),
-                (
-                    "method",
-                    "sample_period",
-                    "market_beta_description",
-                    "factor_components",
-                    "residual_alpha",
-                    "supports_hypothesis",
-                ),
+                ("method", "sample_period", "supports_hypothesis"),
             ),
             "check_plans": check_plans,
         }
@@ -194,20 +186,24 @@ def _stage_gate_summary(stage: int, kg_state: KGState) -> dict:
         bucket = summary.get(status_to_bucket.get(status, ""))
         if bucket is None:
             continue
-        bucket.append({"id": gate_id, "reason": gate_state.get("reason", "")})
+        if status == "pass":
+            bucket.append(gate_id)
+        else:
+            bucket.append({"id": gate_id, "reason": gate_state.get("reason", "")})
 
     return summary
 
 
-def _stage_relations(stage: int, kg_state: KGState) -> list[dict]:
+def _stage_relations(stage: int, kg_state: KGState, scope: str | None = None) -> list[dict]:
     relations = [
         {
             key: value
             for key, value in relation.items()
-            if key != "stage"
+            if key not in {"stage", "scope"}
         }
         for relation in kg_state.relations
         if relation.get("stage") == stage
+        and (scope is None or relation.get("scope", "semantic") == scope)
     ]
     return sorted(
         relations,
@@ -260,3 +256,44 @@ def _dedupe_preserve_order(items: list[str]) -> list[str]:
         seen.add(normalized)
         ordered.append(normalized)
     return ordered
+
+
+def _prompt_entities(stage: int, kg_state: KGState) -> dict:
+    entities: dict[str, Any] = {}
+
+    if stage >= 1:
+        for name in ("Edge", "Hypothesis", "MarketInefficiency"):
+            if kg_state.entities.get(name):
+                entities[name] = kg_state.entities[name]
+
+    if stage >= 2:
+        if kg_state.entities.get("ReturnDecomposition"):
+            entities["ReturnDecomposition"] = kg_state.entities["ReturnDecomposition"]
+        for check_name in kg_state.active_checks.get("stage_2", []):
+            if kg_state.entities.get(check_name):
+                entities[check_name] = kg_state.entities[check_name]
+
+    return entities
+
+
+def _prompt_gate_view(stage: int, kg_state: KGState) -> dict:
+    gate_summary = _stage_gate_summary(stage, kg_state)
+    return {
+        "passed_ids": gate_summary["passed"],
+        "pending": gate_summary["pending"],
+        "failed": gate_summary["failed"],
+    }
+
+
+def _strip_empty(value: Any) -> Any:
+    if isinstance(value, dict):
+        cleaned = {key: _strip_empty(item) for key, item in value.items()}
+        return {
+            key: item
+            for key, item in cleaned.items()
+            if item not in ({}, [], "", None)
+        }
+    if isinstance(value, list):
+        cleaned_list = [_strip_empty(item) for item in value]
+        return [item for item in cleaned_list if item not in ({}, [], "", None)]
+    return value

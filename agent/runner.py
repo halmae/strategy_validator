@@ -14,7 +14,7 @@ from google.genai import types
 
 from .kg_store import KGState
 from .config_loader import load_settings, load_prompt
-from .stage_summary import format_stage_summaries
+from .stage_summary import build_prompt_kg_snapshot, format_stage_summaries
 from .stage_runtime import (
     RuntimeValidationError,
     attempt_stage_advance,
@@ -151,6 +151,21 @@ TOOLS = [types.Tool(function_declarations=FUNCTION_DECLARATIONS)]
 
 
 # ---------------------------------------------------------------------------
+# Prompt snapshots
+# ---------------------------------------------------------------------------
+def build_routing_prompt_snapshot(stage: int, kg_state: KGState) -> dict:
+    return {
+        "stage": stage,
+        "active_checks": list(kg_state.active_checks.get(f"stage_{stage}", [])),
+        "resolved_by_runtime": True,
+        "note": (
+            "Routing modulation has already been resolved deterministically. "
+            "Use the active checks in this snapshot instead of re-deriving routes."
+        ),
+    }
+
+
+# ---------------------------------------------------------------------------
 # System prompt — assembled from config/prompts/ files + dynamic context
 # ---------------------------------------------------------------------------
 def build_system_prompt(
@@ -174,8 +189,16 @@ def build_system_prompt(
         stage=stage,
         strategy_text=strategy_text,
         schema_yaml=yaml.dump(schema, allow_unicode=True, default_flow_style=False),
-        routing_yaml=yaml.dump(routing, allow_unicode=True, default_flow_style=False),
-        kg_json=json.dumps(kg_state.to_dict(), ensure_ascii=False, indent=2),
+        routing_yaml=yaml.dump(
+            build_routing_prompt_snapshot(stage, kg_state),
+            allow_unicode=True,
+            default_flow_style=False,
+        ),
+        kg_json=json.dumps(
+            build_prompt_kg_snapshot(stage, kg_state),
+            ensure_ascii=False,
+            indent=2,
+        ),
         stage_summaries_json=format_stage_summaries(kg_state.stage_summaries),
     )
 

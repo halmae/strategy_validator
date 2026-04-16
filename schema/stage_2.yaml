@@ -21,6 +21,12 @@ stage: 2
 name: decomposition
 depends_on: stage_1
 
+summary:
+  objective: "Turn the Stage 1 hypothesis into a concrete decomposition plan and bias-check plan."
+  next_stage_handoff:
+    - "Use the Stage 2 plan to drive signal-quality validation once Stage 3 exists."
+    - "Evidence gates that remain pending should be revisited after running the planned analyses."
+
 # -----------------------------------------------------------------------------
 # Deferred dimension resolved at this stage
 # (signal_source was deferred from Stage 0; resolving it re-computes active_checks)
@@ -165,6 +171,7 @@ relationships:
     predicate: tests
     field: tests
     required_per_active_check: true
+    scope: semantic
   - kind: mapped_field_predicate
     subject: ReturnDecomposition
     predicate_field: supports_hypothesis
@@ -174,6 +181,7 @@ relationships:
       inconclusive: inconclusive
     object_ref: Hypothesis.claim
     required: false
+    scope: semantic
 
 # -----------------------------------------------------------------------------
 # Gate conditions

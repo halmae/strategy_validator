@@ -168,6 +168,7 @@ class StageRuntimeTests(unittest.TestCase):
                 "subject": "Edge",
                 "predicate": "grounded_in",
                 "object": "Hypothesis",
+                "scope": "structural",
             },
             kg_state.relations,
         )
@@ -177,6 +178,7 @@ class StageRuntimeTests(unittest.TestCase):
                 "subject": "Edge",
                 "predicate": "exploits",
                 "object": "MarketInefficiency",
+                "scope": "structural",
             },
             kg_state.relations,
         )
@@ -312,6 +314,7 @@ class StageRuntimeTests(unittest.TestCase):
                 "subject": "event_definition_consistency",
                 "predicate": "tests",
                 "object": "Hypothesis.mechanism",
+                "scope": "semantic",
             },
             kg_state.relations,
         )
@@ -322,6 +325,7 @@ class StageRuntimeTests(unittest.TestCase):
                 "predicate": "supports",
                 "object": "Hypothesis.claim",
                 "object_value": "Theme chasing creates temporary inefficiencies.",
+                "scope": "semantic",
             },
             kg_state.relations,
         )

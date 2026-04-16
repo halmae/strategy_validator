@@ -4,7 +4,11 @@ from google.genai import types
 
 from agent.kg_store import KGState
 from agent.session_store import prune_session_contents
-from agent.stage_summary import build_stage_summary, format_stage_summaries
+from agent.stage_summary import (
+    build_prompt_kg_snapshot,
+    build_stage_summary,
+    format_stage_summaries,
+)
 
 
 class StageSummaryTests(unittest.TestCase):
@@ -48,16 +52,27 @@ class StageSummaryTests(unittest.TestCase):
             active_checks={"stage_1": ["walk_forward_emphasis"]},
         )
 
-        summary = build_stage_summary(1, {"name": "edge_existence"}, kg_state)
+        summary = build_stage_summary(
+            1,
+            {
+                "name": "edge_existence",
+                "summary": {
+                    "objective": "Edge objective",
+                    "next_stage_handoff": ["next-1"],
+                },
+            },
+            kg_state,
+        )
 
         self.assertEqual(summary["stage"], 1)
+        self.assertEqual(summary["objective"], "Edge objective")
         self.assertEqual(summary["resolved_facts"]["deferred"]["universe_anchor"], "KOSPI")
         self.assertEqual(summary["resolved_facts"]["edge"]["type"], "behavioral")
         self.assertEqual(summary["active_checks"], ["walk_forward_emphasis"])
-        self.assertEqual(summary["gates"]["passed"][0]["id"], "G1_1")
+        self.assertEqual(summary["gates"]["passed"][0], "G1_1")
         self.assertIn("Walk-forward plan still needs detail.", summary["open_questions"])
 
-    def test_stage_summary_includes_stage_relations(self) -> None:
+    def test_stage_summary_includes_only_semantic_relations(self) -> None:
         kg_state = KGState(
             relations=[
                 {
@@ -65,25 +80,94 @@ class StageSummaryTests(unittest.TestCase):
                     "subject": "Edge",
                     "predicate": "grounded_in",
                     "object": "Hypothesis",
+                    "scope": "structural",
                 },
                 {
                     "stage": 2,
                     "subject": "ReturnDecomposition",
                     "predicate": "supports",
                     "object": "Hypothesis.claim",
+                    "scope": "semantic",
+                },
+                {
+                    "stage": 1,
+                    "subject": "Hypothesis",
+                    "predicate": "explains",
+                    "object": "MarketInefficiency.persistence",
+                    "scope": "semantic",
                 },
             ]
         )
 
-        summary = build_stage_summary(1, {"name": "edge_existence"}, kg_state)
+        summary = build_stage_summary(
+            1,
+            {
+                "name": "edge_existence",
+                "summary": {
+                    "objective": "Edge objective",
+                    "next_stage_handoff": [],
+                },
+            },
+            kg_state,
+        )
 
         self.assertEqual(
             summary["relations"],
             [
                 {
+                    "subject": "Hypothesis",
+                    "predicate": "explains",
+                    "object": "MarketInefficiency.persistence",
+                }
+            ],
+        )
+
+    def test_build_prompt_kg_snapshot_prefers_current_stage_semantic_view(self) -> None:
+        kg_state = KGState(
+            stage=2,
+            type_vector={"alpha_family": "event_driven"},
+            deferred={"signal_source": "price_volume"},
+            entities={
+                "Hypothesis": {"claim": "Theme chasing persists."},
+                "ReturnDecomposition": {"method": "event_study"},
+                "event_definition_consistency": {"tests": "Hypothesis.mechanism"},
+            },
+            gates={
+                "G2_P1": {"status": "pass", "reason": "ok"},
+                "G2_P3": {"status": "pending", "reason": "missing method"},
+            },
+            active_checks={"stage_2": ["event_definition_consistency"]},
+            relations=[
+                {
+                    "stage": 1,
                     "subject": "Edge",
                     "predicate": "grounded_in",
                     "object": "Hypothesis",
+                    "scope": "structural",
+                },
+                {
+                    "stage": 2,
+                    "subject": "event_definition_consistency",
+                    "predicate": "tests",
+                    "object": "Hypothesis.mechanism",
+                    "scope": "semantic",
+                },
+            ],
+            completed_stages=[0, 1],
+        )
+
+        snapshot = build_prompt_kg_snapshot(2, kg_state)
+
+        self.assertEqual(snapshot["stage"], 2)
+        self.assertEqual(snapshot["active_checks"], ["event_definition_consistency"])
+        self.assertEqual(snapshot["gates"]["passed_ids"], ["G2_P1"])
+        self.assertEqual(
+            snapshot["relations"],
+            [
+                {
+                    "subject": "event_definition_consistency",
+                    "predicate": "tests",
+                    "object": "Hypothesis.mechanism",
                 }
             ],
         )
@@ -98,17 +182,43 @@ class StageSummaryTests(unittest.TestCase):
 
         self.assertLess(rendered.find('"stage": 0'), rendered.find('"stage": 2'))
 
-    def test_prune_session_contents_keeps_recent_messages(self) -> None:
+    def test_prune_session_contents_keeps_recent_turns(self) -> None:
         contents = [
-            types.Content(role="user", parts=[types.Part(text=f"message-{idx}")])
-            for idx in range(10)
+            types.Content(role="user", parts=[types.Part(text="turn-0 user")]),
+            types.Content(role="model", parts=[types.Part(text="turn-0 model")]),
+            types.Content(
+                role="model",
+                parts=[
+                    types.Part(
+                        function_call=types.FunctionCall(
+                            name="update_type_vector",
+                            args={"dimension": "alpha_family", "value": "event_driven"},
+                        )
+                    )
+                ],
+            ),
+            types.Content(
+                role="user",
+                parts=[
+                    types.Part(
+                        function_response=types.FunctionResponse(
+                            name="update_type_vector",
+                            response={"result": "ok"},
+                        )
+                    )
+                ],
+            ),
+            types.Content(role="model", parts=[types.Part(text="turn-0 done")]),
+            types.Content(role="user", parts=[types.Part(text="turn-1 user")]),
+            types.Content(role="model", parts=[types.Part(text="turn-1 model")]),
+            types.Content(role="user", parts=[types.Part(text="turn-2 user")]),
+            types.Content(role="model", parts=[types.Part(text="turn-2 model")]),
         ]
 
-        pruned = prune_session_contents(contents, keep_recent_messages=4)
+        pruned = prune_session_contents(contents, keep_recent_turns=2)
 
-        self.assertEqual(len(pruned), 4)
-        self.assertEqual(pruned[0].parts[0].text, "message-6")
-        self.assertEqual(pruned[-1].parts[0].text, "message-9")
+        self.assertEqual(pruned[0].parts[0].text, "turn-1 user")
+        self.assertEqual(pruned[-1].parts[0].text, "turn-2 model")
 
 
 if __name__ == "__main__":

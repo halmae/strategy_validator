@@ -469,6 +469,7 @@ def _derive_fixed_relation(stage: int, spec: dict, kg_state: KGState) -> dict | 
         "stage": stage,
         "subject": subject,
         "predicate": predicate,
+        "scope": spec.get("scope", "semantic"),
     }
 
     if object_name:
@@ -505,6 +506,7 @@ def _derive_active_check_relations(stage: int, spec: dict, kg_state: KGState) ->
                 "subject": check_name,
                 "predicate": predicate,
                 "object": str(field_value).strip(),
+                "scope": spec.get("scope", "semantic"),
             }
         )
 
@@ -533,6 +535,7 @@ def _derive_mapped_field_relation(stage: int, spec: dict, kg_state: KGState) -> 
         "stage": stage,
         "subject": subject,
         "predicate": predicate,
+        "scope": spec.get("scope", "semantic"),
     }
 
     if object_name:
@@ -625,6 +628,7 @@ def _dedupe_relations(relations: list[dict]) -> list[dict]:
             relation.get("predicate"),
             relation.get("object"),
             relation.get("object_value"),
+            relation.get("scope"),
         )
         if key in seen:
             continue

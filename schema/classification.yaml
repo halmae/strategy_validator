@@ -15,6 +15,15 @@
 #     universe_anchor (→ Stage 1)
 # =============================================================================
 
+stage: 0
+name: classification
+
+summary:
+  objective: "Resolve the strategy type vector and determine whether the workflow is in scope."
+  next_stage_handoff:
+    - "Resolve Stage 1 deferred fields such as universe scope and anchor."
+    - "Pin down the edge claim, mechanism, falsification condition, and inefficiency persistence."
+
 # -----------------------------------------------------------------------------
 # Dimensions
 # -----------------------------------------------------------------------------

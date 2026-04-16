@@ -135,6 +135,7 @@ def main() -> None:
     settings = load_settings()
     model_config = get_model_config()
     model_name = model_config["name"]
+    keep_recent_turns = settings.get("session", {}).get("keep_recent_turns", 4)
 
     strategy_text = strategy_path.read_text(encoding="utf-8")
     kg_state = load_kg_state(strategy_path)
@@ -259,7 +260,7 @@ def main() -> None:
             if stage_id not in completed_before
         ]
         if newly_completed:
-            contents = prune_session_contents(contents, keep_recent_messages=8)
+            contents = prune_session_contents(contents, keep_recent_turns=keep_recent_turns)
 
         if kg_state.stage != current_stage:
             current_stage = kg_state.stage

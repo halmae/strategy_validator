@@ -17,6 +17,13 @@ stage: 1
 name: edge_existence
 depends_on: classification   # type_vector must be resolved before entering
 
+summary:
+  objective: "Establish a falsifiable edge hypothesis and the market inefficiency it exploits."
+  next_stage_handoff:
+    - "Resolve signal_source first because it activates Stage 2 checks."
+    - "Define ReturnDecomposition.method and sample_period."
+    - "For each active Stage 2 check, fill tests, evidence_type, criterion, and method."
+
 # -----------------------------------------------------------------------------
 # Deferred dimensions resolved at this stage
 # (declared in classification.yaml as deferred → stage_1)
@@ -135,16 +142,19 @@ relationships:
     subject: Edge
     object: Hypothesis
     required: true
+    scope: structural
   - kind: fixed
     predicate: exploits
     subject: Edge
     object: MarketInefficiency
     required: true
+    scope: structural
   - kind: fixed
     predicate: explains
     subject: Hypothesis
     object_ref: MarketInefficiency.persistence
     required: false
+    scope: semantic
 
 # -----------------------------------------------------------------------------
 # Gate conditions
