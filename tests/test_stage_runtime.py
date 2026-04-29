@@ -12,8 +12,9 @@ class StageRuntimeTests(unittest.TestCase):
         cls.classification_schema = load_schema("classification")
         cls.stage_1_schema = load_schema("stage_1")
         cls.stage_2_schema = load_schema("stage_2")
+        cls.stage_3_schema = load_schema("stage_3")
         cls.routing = load_schema("routing")
-        cls.max_implemented_stage = 2
+        cls.max_implemented_stage = 3
 
     def process_call(self, name: str, args: dict, kg_state: KGState, stage: int, schema: dict) -> str:
         return process_function_call(
@@ -307,6 +308,65 @@ class StageRuntimeTests(unittest.TestCase):
         self.assertEqual(kg_state.stage, 2)
         self.assertTrue(kg_state.workflow_complete)
         self.assertIn(2, kg_state.completed_stages)
+        self.assertIn(3, kg_state.skipped_stages)
+
+    def test_stage_2_advances_to_stage_3_when_signal_score_exists(self) -> None:
+        kg_state = KGState(
+            stage=2,
+            type_vector={
+                "alpha_family": "carry",
+                "exposure_structure": "long_only",
+                "asset_class": "futures",
+                "market_scope": "us",
+                "decision_cadence": "daily",
+                "execution_mode": "systematic",
+            },
+            deferred={"signal_source": "price_volume"},
+            entities={
+                "SignalScore": {
+                    "definition": "Carry rank across contracts.",
+                },
+                "ReturnDecomposition": {
+                    "method": "attribution",
+                    "sample_period": "2020-01 ~ 2024-12",
+                },
+            },
+        )
+
+        sync_runtime_state(2, self.stage_2_schema, self.routing, kg_state)
+        result = self.process_call(
+            "advance_stage",
+            {"from_stage": 2, "to_stage": 3, "summary": "stage done"},
+            kg_state,
+            stage=2,
+            schema=self.stage_2_schema,
+        )
+
+        self.assertIn("Stage 2 -> 3", result)
+        self.assertEqual(kg_state.stage, 3)
+        self.assertFalse(kg_state.workflow_complete)
+        self.assertNotIn(3, kg_state.skipped_stages)
+
+    def test_stage_2_can_seed_signal_score_for_stage_3_routing(self) -> None:
+        kg_state = KGState(stage=2)
+
+        result = self.process_call(
+            "update_kg_entity",
+            {
+                "entity": "SignalScore",
+                "property": "definition",
+                "value": "Signal is triggered when price reaches +10%.",
+            },
+            kg_state,
+            stage=2,
+            schema=self.stage_2_schema,
+        )
+
+        self.assertIn("updated", result)
+        self.assertEqual(
+            kg_state.entities["SignalScore"]["definition"],
+            "Signal is triggered when price reaches +10%.",
+        )
 
     def test_stage_2_placeholders_do_not_satisfy_plan_gates(self) -> None:
         kg_state = KGState(
@@ -417,6 +477,133 @@ class StageRuntimeTests(unittest.TestCase):
             },
             kg_state.relations,
         )
+
+    def test_stage_3_activates_signal_quality_checks_from_routing(self) -> None:
+        kg_state = KGState(
+            stage=3,
+            type_vector={
+                "alpha_family": "event_driven",
+                "exposure_structure": "long_only",
+                "asset_class": "equity",
+                "market_scope": "korea",
+                "decision_cadence": "intraday",
+                "execution_mode": "systematic",
+            },
+            entities={"SignalScore": {"definition": "Price reaches +10% intraday."}},
+        )
+
+        sync_runtime_state(3, self.stage_3_schema, self.routing, kg_state)
+
+        self.assertEqual(
+            kg_state.active_checks["stage_3"],
+            ["event_signal_alignment", "signal_decay_intraday"],
+        )
+
+    def test_stage_3_plan_gates_can_advance_with_evidence_pending(self) -> None:
+        kg_state = KGState(
+            stage=3,
+            type_vector={
+                "alpha_family": "event_driven",
+                "exposure_structure": "long_only",
+                "asset_class": "equity",
+                "market_scope": "korea",
+                "decision_cadence": "intraday",
+                "execution_mode": "systematic",
+            },
+            entities={
+                "Hypothesis": {
+                    "claim": "Theme attention creates short-lived intraday continuation.",
+                    "mechanism": "Retail attention clusters into stocks already up sharply.",
+                },
+                "SignalScore": {
+                    "definition": "Signal is 1 when price first reaches +10% from prior close.",
+                    "signal_direction": "higher_better",
+                    "measurement_method": "Event-study return from +10% trigger to +15% or 10:00.",
+                    "evaluation_window": "09:00~10:00",
+                },
+                "event_signal_alignment": {
+                    "tests": "Hypothesis.mechanism",
+                    "evidence_type": "attestation",
+                    "criterion": "+10% trigger must represent theme-attention demand.",
+                    "method": "Review event definition against strategy hypothesis.",
+                },
+                "signal_decay_intraday": {
+                    "tests": "SignalScore.evaluation_window",
+                    "evidence_type": "quantitative",
+                    "criterion": "Forward return should decay after the first hour.",
+                    "method": "Bucket forward returns by minutes since trigger.",
+                },
+            },
+        )
+
+        sync_runtime_state(3, self.stage_3_schema, self.routing, kg_state)
+
+        self.assertEqual(kg_state.gates["G3_0"]["status"], "pass")
+        self.assertEqual(kg_state.gates["G3_P1"]["status"], "pass")
+        self.assertEqual(kg_state.gates["G3_P2"]["status"], "pass")
+        self.assertEqual(kg_state.gates["G3_E1"]["status"], "pending")
+        self.assertEqual(kg_state.gates["G3_E2"]["status"], "pending")
+
+        result = self.process_call(
+            "advance_stage",
+            {"from_stage": 3, "to_stage": 4, "summary": "stage done"},
+            kg_state,
+            stage=3,
+            schema=self.stage_3_schema,
+        )
+
+        self.assertIn("Stage 4 is not implemented yet", result)
+        self.assertEqual(kg_state.stage, 3)
+        self.assertTrue(kg_state.workflow_complete)
+        self.assertIn(3, kg_state.completed_stages)
+        self.assertIn(
+            {
+                "stage": 3,
+                "subject": "SignalScore",
+                "predicate": "operationalizes",
+                "object": "Hypothesis.mechanism",
+                "object_value": "Retail attention clusters into stocks already up sharply.",
+                "scope": "semantic",
+            },
+            kg_state.relations,
+        )
+
+    def test_stage_3_blocks_advance_until_active_check_plans_are_defined(self) -> None:
+        kg_state = KGState(
+            stage=3,
+            type_vector={
+                "alpha_family": "event_driven",
+                "exposure_structure": "long_only",
+                "asset_class": "equity",
+                "market_scope": "korea",
+                "decision_cadence": "intraday",
+                "execution_mode": "systematic",
+            },
+            entities={
+                "Hypothesis": {
+                    "claim": "Theme attention creates short-lived intraday continuation.",
+                    "mechanism": "Retail attention clusters into stocks already up sharply.",
+                },
+                "SignalScore": {
+                    "definition": "Signal is 1 when price reaches +10%.",
+                    "signal_direction": "higher_better",
+                    "measurement_method": "Event-study forward returns.",
+                    "evaluation_window": "09:00~10:00",
+                },
+            },
+        )
+
+        sync_runtime_state(3, self.stage_3_schema, self.routing, kg_state)
+        result = self.process_call(
+            "advance_stage",
+            {"from_stage": 3, "to_stage": 4, "summary": "stage done"},
+            kg_state,
+            stage=3,
+            schema=self.stage_3_schema,
+        )
+
+        self.assertIn("G3_P2", result)
+        self.assertFalse(kg_state.workflow_complete)
 
 
 if __name__ == "__main__":

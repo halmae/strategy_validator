@@ -130,6 +130,7 @@ class StageSummaryTests(unittest.TestCase):
             entities={
                 "Hypothesis": {"claim": "Theme chasing persists."},
                 "ReturnDecomposition": {"method": "event_study"},
+                "SignalScore": {"definition": "Price reaches +10%."},
                 "event_definition_consistency": {"tests": "Hypothesis.mechanism"},
             },
             gates={
@@ -160,6 +161,10 @@ class StageSummaryTests(unittest.TestCase):
 
         self.assertEqual(snapshot["stage"], 2)
         self.assertEqual(snapshot["active_checks"], ["event_definition_consistency"])
+        self.assertEqual(
+            snapshot["entities"]["SignalScore"]["definition"],
+            "Price reaches +10%.",
+        )
         self.assertEqual(snapshot["gates"]["passed_ids"], ["G2_P1"])
         self.assertEqual(
             snapshot["relations"],
@@ -171,6 +176,48 @@ class StageSummaryTests(unittest.TestCase):
                 }
             ],
         )
+
+    def test_build_prompt_kg_snapshot_includes_stage_3_signal_context(self) -> None:
+        kg_state = KGState(
+            stage=3,
+            type_vector={"alpha_family": "event_driven"},
+            entities={
+                "Hypothesis": {"mechanism": "Retail attention clusters."},
+                "SignalScore": {
+                    "definition": "Price reaches +10%.",
+                    "signal_direction": "higher_better",
+                },
+                "signal_decay_intraday": {
+                    "tests": "SignalScore.evaluation_window",
+                },
+            },
+            active_checks={"stage_3": ["signal_decay_intraday"]},
+            skipped_stages=[4],
+            gates={
+                "G3_0": {"status": "pass", "reason": "ok"},
+                "G3_P1": {"status": "pending", "reason": "missing method"},
+            },
+            relations=[
+                {
+                    "stage": 3,
+                    "subject": "SignalScore",
+                    "predicate": "operationalizes",
+                    "object": "Hypothesis.mechanism",
+                    "object_value": "Retail attention clusters.",
+                    "scope": "semantic",
+                }
+            ],
+        )
+
+        snapshot = build_prompt_kg_snapshot(3, kg_state)
+
+        self.assertEqual(snapshot["skipped_stages"], [4])
+        self.assertEqual(
+            snapshot["entities"]["SignalScore"]["definition"],
+            "Price reaches +10%.",
+        )
+        self.assertEqual(snapshot["active_checks"], ["signal_decay_intraday"])
+        self.assertEqual(snapshot["gates"]["passed_ids"], ["G3_0"])
 
     def test_format_stage_summaries_orders_by_stage(self) -> None:
         payload = {

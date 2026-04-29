@@ -45,6 +45,9 @@ class KGState:
     # Implemented stage completion tracker
     completed_stages: list = field(default_factory=list)
 
+    # Conditional stages skipped by routing
+    skipped_stages: list = field(default_factory=list)
+
     # Stage handoff summaries used to compress long session history
     stage_summaries: dict = field(default_factory=dict)
 
@@ -88,6 +91,10 @@ class KGState:
         if stage not in self.completed_stages:
             self.completed_stages.append(stage)
 
+    def mark_stage_skipped(self, stage: int) -> None:
+        if stage not in self.skipped_stages:
+            self.skipped_stages.append(stage)
+
     def set_stage_summary(self, stage: int, summary: dict) -> None:
         self.stage_summaries[f"stage_{stage}"] = summary
 
@@ -102,7 +109,8 @@ class KGState:
 
     @classmethod
     def from_dict(cls, d: dict) -> "KGState":
-        return cls(**d)
+        fields = cls.__dataclass_fields__
+        return cls(**{key: value for key, value in d.items() if key in fields})
 
 
 def kg_path(strategy_path: Path) -> Path:

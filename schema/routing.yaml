@@ -30,7 +30,7 @@ stages:
 rules:
   - stage: 3
     conditions:
-      - if:   { kg_entity_exists: signal_score }
+      - if:   { kg_entity_exists: SignalScore }
         then: required
       - default: skip
 
@@ -43,9 +43,9 @@ rules:
 # -----------------------------------------------------------------------------
 prerequisites:
   - condition:  { alpha_family: event_driven }
-    requires:   { kg_entity: signal_score }
+    requires:   { kg_entity: SignalScore }
     message: >
-      event_driven 전략은 signal_score entity가 정의되어야
+      event_driven 전략은 SignalScore entity가 정의되어야
       Stage 3 (Signal Quality)가 활성화됩니다.
       지금 signal을 어떻게 정량화할 것인지 알고 있나요?
 
@@ -85,12 +85,22 @@ modulation:
         add_checks: [cointegration_stability, spread_stationarity]
       stage_2:
         add_checks: [pair_selection_bias]
+      stage_3:
+        add_checks: [spread_signal_quality]
     carry:
       stage_1:
         add_checks: [risk_premium_decomposition]
     event_driven:
       stage_2:
         add_checks: [event_definition_consistency, look_ahead_event_timing]
+      stage_3:
+        add_checks: [event_signal_alignment]
+    cross_sectional_factor:
+      stage_3:
+        add_checks: [ic_stability]
+    time_series:
+      stage_3:
+        add_checks: [autocorrelation_decay]
 
   exposure_structure:
     market_neutral:

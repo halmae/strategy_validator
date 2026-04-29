@@ -91,6 +91,26 @@ entities:
         type: str
         required: true
 
+  # --- Optional Stage 3 seed --------------------------------------------------
+  SignalScore:
+    description: >
+      Optional seed for Stage 3. When this entity exists, routing activates
+      Stage 3 (Signal Quality). Stage 3 will enforce its full plan gates.
+    properties:
+      definition:
+        type: str
+        required: false
+      signal_direction:
+        type: enum
+        values: [higher_better, lower_better, centered, categorical]
+        required: false
+      measurement_method:
+        type: str
+        required: false
+      evaluation_window:
+        type: str
+        required: false
+
   # --- Generic Check template -------------------------------------------------
   # Each activated check name becomes its own Check-shaped entity in the KG.
   # The entity key in kg_state.entities is the check name itself

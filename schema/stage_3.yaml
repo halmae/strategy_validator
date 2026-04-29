@@ -1,0 +1,205 @@
+# =============================================================================
+# Stage 3: Signal Quality
+# =============================================================================
+# Purpose:
+#   Validate that the Stage 1 hypothesis has been operationalized as a concrete
+#   signal and that the signal has measurable predictive quality.
+#
+# Design principles:
+#   - Stage 3 is conditional. It is entered only when SignalScore exists.
+#   - SignalScore is the central artifact: it translates Hypothesis.mechanism
+#     into a measurable ranking, trigger, or score.
+#   - Gates follow Stage 2's PLAN / EVIDENCE split. Plan gates are blocking for
+#     later stages; evidence gates are advisory while empirical work is pending.
+# =============================================================================
+
+stage: 3
+name: signal_quality
+depends_on: stage_2
+
+summary:
+  objective: "Define and quality-check the measurable signal that operationalizes the edge hypothesis."
+  next_stage_handoff:
+    - "Use SignalScore.definition and signal_direction to define entry rules in later stages."
+    - "Use decay_profile and active signal checks to choose exit and execution timing assumptions."
+    - "Evidence gates that remain pending should be revisited after signal backtests are available."
+
+# -----------------------------------------------------------------------------
+# KG Entities
+# -----------------------------------------------------------------------------
+entities:
+
+  SignalScore:
+    description: >
+      The measurable score, trigger, or ranking variable that operationalizes
+      the Stage 1 hypothesis mechanism.
+    properties:
+      definition:
+        type: str
+        required: true
+        gate_kind: plan
+        note: "Exact signal construction in words, e.g. 'price reaches +10% from prior close'."
+      signal_direction:
+        type: enum
+        values: [higher_better, lower_better, centered, categorical]
+        required: true
+        gate_kind: plan
+        note: "How signal values map to expected returns."
+      measurement_method:
+        type: str
+        required: true
+        gate_kind: plan
+        note: "How signal quality will be measured, e.g. IC, hit rate, event-study spread."
+      evaluation_window:
+        type: str
+        required: true
+        gate_kind: plan
+        note: "Prediction window used for signal evaluation, e.g. '10:00~10:30', '5 trading days'."
+
+      ic_metric:
+        type: str
+        required: false
+        gate_kind: evidence
+        note: "Information coefficient or equivalent predictive association; use 'not applicable' if unsuitable."
+      hit_rate:
+        type: str
+        required: false
+        gate_kind: evidence
+        note: "Directional accuracy / event success rate; use 'not applicable' if unsuitable."
+      decay_profile:
+        type: str
+        required: false
+        gate_kind: evidence
+        note: "How quickly predictive value decays after signal observation."
+      supports_hypothesis:
+        type: enum
+        values: [supports, contradicts, inconclusive]
+        required: false
+        gate_kind: evidence
+      reasoning:
+        type: str
+        required: false
+        gate_kind: evidence
+
+  Check:
+    description: >
+      Generic signal-quality check entity. One per activated check name.
+      Each check must declare what signal property or Stage 1/2 claim it tests.
+    applies_to: "Any name in active_checks['stage_3']"
+    properties:
+      tests:
+        type: str
+        required: true
+        gate_kind: plan
+      evidence_type:
+        type: enum
+        values: [attestation, quantitative, artifact_ref]
+        required: true
+        gate_kind: plan
+      criterion:
+        type: str
+        required: true
+        gate_kind: plan
+      method:
+        type: str
+        required: true
+        gate_kind: plan
+
+      evidence_summary:
+        type: str
+        required: false
+        gate_kind: evidence
+      metrics:
+        type: str
+        required: false
+        gate_kind: evidence
+      artifact_ref:
+        type: str
+        required: false
+        gate_kind: evidence
+      passes_criterion:
+        type: bool
+        required: false
+        gate_kind: evidence
+      reasoning:
+        type: str
+        required: false
+        gate_kind: evidence
+
+# -----------------------------------------------------------------------------
+# Relationships
+# -----------------------------------------------------------------------------
+relationships:
+  - kind: fixed
+    predicate: operationalizes
+    subject: SignalScore
+    object_ref: Hypothesis.mechanism
+    required: true
+    scope: semantic
+  - kind: active_check_field
+    predicate: tests
+    field: tests
+    required_per_active_check: true
+    scope: semantic
+  - kind: mapped_field_predicate
+    subject: SignalScore
+    predicate_field: supports_hypothesis
+    predicate_values:
+      supports: supports
+      contradicts: contradicts
+      inconclusive: inconclusive
+    object_ref: Hypothesis.claim
+    required: false
+    scope: semantic
+
+# -----------------------------------------------------------------------------
+# Gate conditions
+# -----------------------------------------------------------------------------
+gate_conditions:
+  - id: G3_0
+    kind: entry
+    description: "SignalScore entity exists"
+    check: "SignalScore exists"
+
+  - id: G3_P1
+    kind: plan
+    description: "SignalScore definition, direction, method, and evaluation window are defined"
+    check: "SignalScore plan fields defined"
+
+  - id: G3_P2
+    kind: plan
+    description: "Every activated signal-quality Check has tests, evidence_type, criterion, method defined"
+    check: "all plan fields defined for each active Check entity"
+
+  - id: G3_E1
+    kind: evidence
+    description: "SignalScore evidence fields are filled and judged"
+    check: "SignalScore evidence fields defined"
+    advisory: true
+
+  - id: G3_E2
+    kind: evidence
+    description: "Every activated signal-quality Check has evidence fields"
+    check: "all evidence fields defined for each active Check entity"
+    advisory: true
+
+# -----------------------------------------------------------------------------
+# Agent behavior
+# -----------------------------------------------------------------------------
+agent:
+  goal: >
+    Convert the hypothesis mechanism into a measurable signal and define a
+    concrete signal-quality validation plan. Fill evidence when available;
+    evidence gates may remain pending.
+
+  stage_flow:
+    - step: 1
+      action: "Ensure SignalScore.definition explicitly operationalizes Hypothesis.mechanism."
+    - step: 2
+      action: "Define signal_direction, measurement_method, and evaluation_window."
+    - step: 3
+      action: "For each activated Check: establish tests, evidence_type, criterion, and method."
+    - step: 4
+      action: "Fill SignalScore evidence fields and per-check evidence when available."
+    - step: 5
+      action: "Advance once entry and plan gates pass; evidence gates are advisory."

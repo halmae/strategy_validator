@@ -1,4 +1,4 @@
-"""Deterministic runtime helpers for stages 0 through 2.
+"""Deterministic runtime helpers for stages 0 through 3.
 
 The YAML files describe the workflow, but stage-critical rules for the
 implemented scope (classification + edge existence) are enforced here so the
@@ -47,6 +47,12 @@ def sync_runtime_state(stage: int, schema: dict, routing: dict, kg_state: KGStat
         _sync_stage_2_checks(routing, kg_state)
         _sync_stage_2_gates(schema, kg_state)
         _sync_stage_relations(stage, schema, kg_state)
+        return
+
+    if stage == 3:
+        _sync_stage_3_checks(routing, kg_state)
+        _sync_stage_3_gates(schema, kg_state)
+        _sync_stage_relations(stage, schema, kg_state)
 
 
 def validate_type_vector_update(schema: dict, dimension: str, value: Any) -> str:
@@ -84,10 +90,10 @@ def validate_entity_update(
     entities = schema.get("entities", {})
     entity_schema = entities.get(entity)
 
-    # Stage 2: if `entity` is not explicitly declared but IS an activated check
-    # name, fall back to the generic `Check` template schema.
-    if entity_schema is None and stage == 2 and kg_state is not None:
-        active = set(kg_state.active_checks.get("stage_2", []))
+    # Stages 2+: if `entity` is not explicitly declared but IS an activated
+    # check name, fall back to the generic `Check` template schema.
+    if entity_schema is None and stage in (2, 3) and kg_state is not None:
+        active = set(kg_state.active_checks.get(f"stage_{stage}", []))
         if entity in active and "Check" in entities:
             entity_schema = entities["Check"]
 
@@ -141,9 +147,12 @@ def attempt_stage_advance(
             f"but advance requested from {from_stage}"
         )
 
-    if to_stage != from_stage + 1:
+    resolved_to_stage = _next_stage_after(from_stage, routing, kg_state)
+    allowed_requests = {from_stage + 1, resolved_to_stage}
+    if to_stage not in allowed_requests:
         raise RuntimeValidationError(
-            f"Only sequential stage transitions are allowed: {from_stage} -> {to_stage}"
+            f"Invalid stage transition: {from_stage} -> {to_stage}. "
+            f"Next routed stage is {resolved_to_stage}."
         )
 
     sync_runtime_state(kg_state.stage, schema, routing, kg_state)
@@ -154,21 +163,81 @@ def attempt_stage_advance(
         _ensure_stage_1_ready(schema, kg_state)
     elif from_stage == 2:
         _ensure_stage_2_ready(schema, kg_state)
+    elif from_stage == 3:
+        _ensure_stage_3_ready(schema, kg_state)
     else:
         raise RuntimeValidationError(f"Stage {from_stage} is not supported yet")
 
     kg_state.mark_stage_completed(from_stage)
 
-    if to_stage > max_implemented_stage:
+    skipped = [
+        stage_id
+        for stage_id in range(from_stage + 1, resolved_to_stage)
+        if not _is_stage_required(stage_id, routing, kg_state)
+    ]
+    for stage_id in skipped:
+        kg_state.mark_stage_skipped(stage_id)
+
+    if resolved_to_stage > max_implemented_stage:
         kg_state.workflow_complete = True
+        skip_note = (
+            " " + " ".join(f"Stage {stage_id} skipped." for stage_id in skipped)
+            if skipped
+            else ""
+        )
         return (
-            f"Stage {from_stage} complete. "
-            f"Stage {to_stage} is not implemented yet."
+            f"Stage {from_stage} complete.{skip_note} "
+            f"Stage {resolved_to_stage} is not implemented yet."
         )
 
-    kg_state.advance_stage(to_stage)
+    kg_state.advance_stage(resolved_to_stage)
     kg_state.workflow_complete = False
-    return f"Stage {from_stage} -> {to_stage}"
+    if skipped:
+        skipped_text = ", ".join(str(stage_id) for stage_id in skipped)
+        return f"Stage {from_stage} -> {resolved_to_stage} (skipped {skipped_text})"
+    return f"Stage {from_stage} -> {resolved_to_stage}"
+
+
+def _next_stage_after(from_stage: int, routing: dict, kg_state: KGState) -> int:
+    next_stage = from_stage + 1
+    while not _is_stage_required(next_stage, routing, kg_state):
+        next_stage += 1
+    return next_stage
+
+
+def _is_stage_required(stage: int, routing: dict, kg_state: KGState) -> bool:
+    default_status = _stage_catalog_status(stage, routing)
+    rules = [
+        rule for rule in routing.get("rules", []) or []
+        if rule.get("stage") == stage
+    ]
+    for rule in rules:
+        for condition in rule.get("conditions", []) or []:
+            if "if" in condition and _route_condition_matches(
+                condition["if"],
+                kg_state,
+            ):
+                return condition.get("then", default_status) != "skip"
+            if "default" in condition:
+                return condition["default"] != "skip"
+    return default_status != "skip"
+
+
+def _stage_catalog_status(stage: int, routing: dict) -> str:
+    for stage_spec in routing.get("stages", []) or []:
+        if stage_spec.get("id") == stage:
+            return stage_spec.get("status", "required")
+    return "required"
+
+
+def _route_condition_matches(condition: dict, kg_state: KGState) -> bool:
+    entity_name = condition.get("kg_entity_exists")
+    if entity_name:
+        return _entity_exists(kg_state, entity_name)
+    for key, expected in condition.items():
+        if kg_state.type_vector.get(key) != expected:
+            return False
+    return True
 
 
 def _normalize_dimension_value(dimension_schema: dict, value: Any, label: str) -> str:
@@ -832,6 +901,20 @@ _DECOMP_EVIDENCE_FIELDS = (
     "reasoning",
 )
 
+_SIGNAL_SCORE_PLAN_FIELDS = (
+    "definition",
+    "signal_direction",
+    "measurement_method",
+    "evaluation_window",
+)
+_SIGNAL_SCORE_EVIDENCE_FIELDS = (
+    "ic_metric",
+    "hit_rate",
+    "decay_profile",
+    "supports_hypothesis",
+    "reasoning",
+)
+
 
 def _sync_stage_2_checks(routing: dict, kg_state: KGState) -> None:
     """Recompute active checks for Stage 2 from routing modulation.
@@ -1022,6 +1105,178 @@ def _ensure_stage_2_ready(schema: dict, kg_state: KGState) -> None:
         )
 
     _ensure_required_relations(2, schema, kg_state)
+
+
+# -----------------------------------------------------------------------------
+# Stage 3: Signal Quality
+# -----------------------------------------------------------------------------
+def _sync_stage_3_checks(routing: dict, kg_state: KGState) -> None:
+    stage_key = "stage_3"
+    modulation = routing.get("modulation", {})
+    active: set[str] = set()
+
+    for dimension, mapping in modulation.items():
+        if not isinstance(mapping, dict):
+            continue
+
+        current_value = kg_state.type_vector.get(dimension)
+        if current_value is None:
+            current_value = kg_state.deferred.get(dimension)
+        if current_value is None:
+            continue
+
+        value_mapping = mapping.get(current_value)
+        if not isinstance(value_mapping, dict):
+            continue
+
+        stage_mapping = value_mapping.get(stage_key)
+        if not isinstance(stage_mapping, dict):
+            continue
+
+        active.update(stage_mapping.get("add_checks", []) or [])
+
+    kg_state.set_checks(stage_key, sorted(active))
+
+
+def _sync_stage_3_gates(schema: dict, kg_state: KGState) -> None:
+    signal_score = kg_state.entities.get("SignalScore", {})
+
+    if signal_score:
+        _set_gate_status(
+            kg_state,
+            "G3_0",
+            "pass",
+            "SignalScore entity exists.",
+        )
+    else:
+        _set_gate_status(
+            kg_state,
+            "G3_0",
+            "pending",
+            "SignalScore entity has not been defined.",
+        )
+
+    missing_signal_plan = [
+        field for field in _SIGNAL_SCORE_PLAN_FIELDS
+        if not _nonempty(signal_score.get(field))
+    ]
+    if missing_signal_plan:
+        _set_gate_status(
+            kg_state,
+            "G3_P1",
+            "pending",
+            f"SignalScore plan fields incomplete: missing {missing_signal_plan}.",
+        )
+    else:
+        _set_gate_status(
+            kg_state,
+            "G3_P1",
+            "pass",
+            "SignalScore plan fields are defined.",
+        )
+
+    active = list(kg_state.active_checks.get("stage_3", []))
+    if not active:
+        _set_gate_status(
+            kg_state,
+            "G3_P2",
+            "pass",
+            "No Stage 3 checks are active for this route, so no per-check plan is required.",
+        )
+    else:
+        incomplete = []
+        for name in active:
+            check = kg_state.entities.get(name, {})
+            missing = [
+                field for field in _CHECK_PLAN_FIELDS
+                if not _nonempty(check.get(field))
+            ]
+            if missing:
+                incomplete.append(f"{name}: missing {missing}")
+        if incomplete:
+            _set_gate_status(
+                kg_state,
+                "G3_P2",
+                "pending",
+                "Plan fields incomplete — " + "; ".join(incomplete),
+            )
+        else:
+            _set_gate_status(
+                kg_state,
+                "G3_P2",
+                "pass",
+                f"All {len(active)} Stage 3 checks have plan fields defined.",
+            )
+
+    missing_signal_ev = [
+        field for field in _SIGNAL_SCORE_EVIDENCE_FIELDS
+        if not _nonempty(signal_score.get(field))
+    ]
+    if missing_signal_ev:
+        _set_gate_status(
+            kg_state,
+            "G3_E1",
+            "pending",
+            f"SignalScore evidence incomplete: missing {missing_signal_ev}.",
+        )
+    else:
+        _set_gate_status(
+            kg_state,
+            "G3_E1",
+            "pass",
+            "SignalScore evidence fields are filled.",
+        )
+
+    if not active:
+        _set_gate_status(
+            kg_state,
+            "G3_E2",
+            "pending",
+            "No active Stage 3 checks yet.",
+        )
+    else:
+        incomplete_ev = []
+        for name in active:
+            check = kg_state.entities.get(name, {})
+            missing = _missing_check_evidence_fields(check)
+            if missing:
+                incomplete_ev.append(f"{name}: missing {missing}")
+        if incomplete_ev:
+            _set_gate_status(
+                kg_state,
+                "G3_E2",
+                "pending",
+                "Evidence incomplete — " + "; ".join(incomplete_ev),
+            )
+        else:
+            _set_gate_status(
+                kg_state,
+                "G3_E2",
+                "pass",
+                f"All {len(active)} Stage 3 checks have evidence fields filled.",
+            )
+
+
+def _ensure_stage_3_ready(schema: dict, kg_state: KGState) -> None:
+    blocking_gates = [
+        gate["id"]
+        for gate in schema.get("gate_conditions", [])
+        if gate.get("kind") in ("entry", "plan")
+    ]
+
+    unresolved = [
+        gid
+        for gid in blocking_gates
+        if kg_state.gates.get(gid, {}).get("status") != "pass"
+    ]
+    if unresolved:
+        raise RuntimeValidationError(
+            "Stage 3 entry/plan gates not passed: "
+            + ", ".join(unresolved)
+            + ". Evidence gates are advisory and may remain pending."
+        )
+
+    _ensure_required_relations(3, schema, kg_state)
 
 
 def _nonempty(value: Any) -> bool:

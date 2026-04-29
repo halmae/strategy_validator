@@ -57,9 +57,10 @@ FUNCTION_DECLARATIONS = [
     types.FunctionDeclaration(
         name="update_kg_entity",
         description=(
-            "Stage 1과 Stage 2에서 KG entity property를 업데이트할 때 사용합니다. "
+            "Stage 1, Stage 2, Stage 3에서 KG entity property를 업데이트할 때 사용합니다. "
             "예: Stage 1의 Edge/Hypothesis/MarketInefficiency, "
-            "Stage 2의 ReturnDecomposition 또는 활성화된 check entity."
+            "Stage 2의 ReturnDecomposition, Stage 3의 SignalScore, "
+            "또는 활성화된 check entity."
         ),
         parameters={
             "type": "object",
@@ -234,9 +235,9 @@ def process_function_call(
             return f"type_vector.{args['dimension']} = {value}"
 
         if name == "update_kg_entity":
-            if stage not in (1, 2):
+            if stage not in (1, 2, 3):
                 raise RuntimeValidationError(
-                    "update_kg_entity is only supported during Stage 1 or Stage 2."
+                    "update_kg_entity is only supported during Stage 1, Stage 2, or Stage 3."
                 )
             value = validate_entity_update(
                 schema,
@@ -268,9 +269,9 @@ def process_function_call(
             if stage == 0:
                 sync_runtime_state(stage, schema, routing, kg_state)
                 return "Stage 0 has no gates; mark_gate ignored."
-            if stage not in (1, 2):
+            if stage not in (1, 2, 3):
                 raise RuntimeValidationError(
-                    "mark_gate is only supported during Stage 1 or Stage 2."
+                    "mark_gate is only supported during Stage 1, Stage 2, or Stage 3."
                 )
             validate_gate_update(stage, schema, kg_state, args["gate_id"])
             kg_state.mark_gate(args["gate_id"], args["status"], args.get("reason", ""))

@@ -41,6 +41,7 @@ def build_prompt_kg_snapshot(stage: int, kg_state: KGState) -> dict:
         "stage": stage,
         "type_vector": dict(kg_state.type_vector),
         "completed_stages": list(kg_state.completed_stages),
+        "skipped_stages": list(kg_state.skipped_stages),
         "deferred": dict(kg_state.deferred),
         "entities": _prompt_entities(stage, kg_state),
         "active_checks": list(kg_state.active_checks.get(f"stage_{stage}", [])),
@@ -120,6 +121,29 @@ def _resolved_facts(stage: int, kg_state: KGState) -> dict:
             "check_plans": check_plans,
         }
 
+    if stage == 3:
+        active_checks = kg_state.active_checks.get("stage_3", [])
+        check_plans = {
+            name: _meaningful_fields(
+                kg_state.entities.get(name, {}),
+                ("tests", "evidence_type", "criterion", "method"),
+            )
+            for name in active_checks
+        }
+        return {
+            "signal_score": _meaningful_fields(
+                kg_state.entities.get("SignalScore", {}),
+                (
+                    "definition",
+                    "signal_direction",
+                    "measurement_method",
+                    "evaluation_window",
+                    "supports_hypothesis",
+                ),
+            ),
+            "check_plans": check_plans,
+        }
+
     return {}
 
 
@@ -148,6 +172,21 @@ def _key_rationale(stage: int, kg_state: KGState) -> list[str]:
             )
         )
         for name in kg_state.active_checks.get("stage_2", []):
+            rationale.extend(
+                _collect_strings(
+                    kg_state.entities.get(name, {}),
+                    ("evidence_summary", "reasoning"),
+                )
+            )
+
+    if stage == 3:
+        rationale.extend(
+            _collect_strings(
+                kg_state.entities.get("SignalScore", {}),
+                ("definition", "decay_profile", "reasoning"),
+            )
+        )
+        for name in kg_state.active_checks.get("stage_3", []):
             rationale.extend(
                 _collect_strings(
                     kg_state.entities.get(name, {}),
@@ -269,7 +308,14 @@ def _prompt_entities(stage: int, kg_state: KGState) -> dict:
     if stage >= 2:
         if kg_state.entities.get("ReturnDecomposition"):
             entities["ReturnDecomposition"] = kg_state.entities["ReturnDecomposition"]
+        if kg_state.entities.get("SignalScore"):
+            entities["SignalScore"] = kg_state.entities["SignalScore"]
         for check_name in kg_state.active_checks.get("stage_2", []):
+            if kg_state.entities.get(check_name):
+                entities[check_name] = kg_state.entities[check_name]
+
+    if stage >= 3:
+        for check_name in kg_state.active_checks.get("stage_3", []):
             if kg_state.entities.get(check_name):
                 entities[check_name] = kg_state.entities[check_name]
 
