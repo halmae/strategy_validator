@@ -7,6 +7,7 @@ STAGE_SCHEMA_MAP = {
     1: "stage_1",
     2: "stage_2",
     3: "stage_3",
+    4: "stage_4",
 }
 
 

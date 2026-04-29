@@ -14,6 +14,7 @@ from google.genai import types
 
 from .kg_store import KGState
 from .config_loader import load_settings, load_prompt
+from .schema_loader import load_schema
 from .stage_summary import build_prompt_kg_snapshot, format_stage_summaries
 from .stage_runtime import (
     RuntimeValidationError,
@@ -57,9 +58,10 @@ FUNCTION_DECLARATIONS = [
     types.FunctionDeclaration(
         name="update_kg_entity",
         description=(
-            "Stage 1, Stage 2, Stage 3에서 KG entity property를 업데이트할 때 사용합니다. "
+            "Stage 1, Stage 2, Stage 3, Stage 4에서 KG entity property를 업데이트할 때 사용합니다. "
             "예: Stage 1의 Edge/Hypothesis/MarketInefficiency, "
             "Stage 2의 ReturnDecomposition, Stage 3의 SignalScore, "
+            "Stage 4의 ExitPolicy/DrawdownProfile, "
             "또는 활성화된 check entity."
         ),
         parameters={
@@ -166,6 +168,53 @@ def build_routing_prompt_snapshot(stage: int, kg_state: KGState) -> dict:
     }
 
 
+def build_market_constraints_snapshot(stage: int, routing: dict, kg_state: KGState) -> dict:
+    if stage < 4:
+        return {
+            "active": False,
+            "note": "Market constraints are injected from Stage 4 onward.",
+        }
+
+    try:
+        constraints = load_schema("market_constraints")
+    except FileNotFoundError:
+        return {
+            "active": False,
+            "note": "market_constraints.yaml was not found.",
+        }
+
+    market_scope = kg_state.type_vector.get("market_scope")
+    markets = _markets_for_scope(routing, market_scope)
+    constraint_map = constraints.get("markets", {})
+    selected = {
+        market: constraint_map[market]
+        for market in markets
+        if market in constraint_map
+    }
+    return {
+        "active": True,
+        "market_scope": market_scope,
+        "markets": selected,
+        "note": (
+            "Reference facts only. Use these to judge exit feasibility; "
+            "do not treat them as user-provided evidence."
+        ),
+    }
+
+
+def _markets_for_scope(routing: dict, market_scope: str | None) -> list[str]:
+    if not market_scope:
+        return []
+    market_modulation = routing.get("modulation", {}).get("market_scope", {})
+    mapping = market_modulation.get("mapping", {})
+    mapped = mapping.get(market_scope)
+    if isinstance(mapped, list):
+        return list(mapped)
+    if isinstance(mapped, str):
+        return [mapped]
+    return [market_scope]
+
+
 # ---------------------------------------------------------------------------
 # System prompt — assembled from config/prompts/ files + dynamic context
 # ---------------------------------------------------------------------------
@@ -192,6 +241,11 @@ def build_system_prompt(
         schema_yaml=yaml.dump(schema, allow_unicode=True, default_flow_style=False),
         routing_yaml=yaml.dump(
             build_routing_prompt_snapshot(stage, kg_state),
+            allow_unicode=True,
+            default_flow_style=False,
+        ),
+        market_constraints_yaml=yaml.dump(
+            build_market_constraints_snapshot(stage, routing, kg_state),
             allow_unicode=True,
             default_flow_style=False,
         ),
@@ -235,9 +289,9 @@ def process_function_call(
             return f"type_vector.{args['dimension']} = {value}"
 
         if name == "update_kg_entity":
-            if stage not in (1, 2, 3):
+            if stage not in (1, 2, 3, 4):
                 raise RuntimeValidationError(
-                    "update_kg_entity is only supported during Stage 1, Stage 2, or Stage 3."
+                    "update_kg_entity is only supported during Stage 1, Stage 2, Stage 3, or Stage 4."
                 )
             value = validate_entity_update(
                 schema,
@@ -269,9 +323,9 @@ def process_function_call(
             if stage == 0:
                 sync_runtime_state(stage, schema, routing, kg_state)
                 return "Stage 0 has no gates; mark_gate ignored."
-            if stage not in (1, 2, 3):
+            if stage not in (1, 2, 3, 4):
                 raise RuntimeValidationError(
-                    "mark_gate is only supported during Stage 1, Stage 2, or Stage 3."
+                    "mark_gate is only supported during Stage 1, Stage 2, Stage 3, or Stage 4."
                 )
             validate_gate_update(stage, schema, kg_state, args["gate_id"])
             kg_state.mark_gate(args["gate_id"], args["status"], args.get("reason", ""))

@@ -1,4 +1,4 @@
-"""Deterministic runtime helpers for stages 0 through 3.
+"""Deterministic runtime helpers for stages 0 through 4.
 
 The YAML files describe the workflow, but stage-critical rules for the
 implemented scope (classification + edge existence) are enforced here so the
@@ -53,6 +53,12 @@ def sync_runtime_state(stage: int, schema: dict, routing: dict, kg_state: KGStat
         _sync_stage_3_checks(routing, kg_state)
         _sync_stage_3_gates(schema, kg_state)
         _sync_stage_relations(stage, schema, kg_state)
+        return
+
+    if stage == 4:
+        _sync_stage_4_checks(routing, kg_state)
+        _sync_stage_4_gates(schema, kg_state)
+        _sync_stage_relations(stage, schema, kg_state)
 
 
 def validate_type_vector_update(schema: dict, dimension: str, value: Any) -> str:
@@ -92,7 +98,7 @@ def validate_entity_update(
 
     # Stages 2+: if `entity` is not explicitly declared but IS an activated
     # check name, fall back to the generic `Check` template schema.
-    if entity_schema is None and stage in (2, 3) and kg_state is not None:
+    if entity_schema is None and stage in (2, 3, 4) and kg_state is not None:
         active = set(kg_state.active_checks.get(f"stage_{stage}", []))
         if entity in active and "Check" in entities:
             entity_schema = entities["Check"]
@@ -157,6 +163,8 @@ def attempt_stage_advance(
         _ensure_stage_2_ready(schema, kg_state)
     elif from_stage == 3:
         _ensure_stage_3_ready(schema, kg_state)
+    elif from_stage == 4:
+        _ensure_stage_4_ready(schema, kg_state)
     else:
         raise RuntimeValidationError(f"Stage {from_stage} is not supported yet")
 
@@ -1007,6 +1015,27 @@ _SIGNAL_SCORE_EVIDENCE_FIELDS = (
     "reasoning",
 )
 
+_EXIT_POLICY_PLAN_FIELDS = (
+    "exit_trigger_type",
+    "rationale",
+    "failure_mode_addressed",
+    "expected_holding_period",
+)
+_EXIT_POLICY_EVIDENCE_FIELDS = (
+    "realized_holding_period",
+    "supports_hypothesis",
+    "reasoning",
+)
+_DRAWDOWN_PROFILE_PLAN_FIELDS = (
+    "measurement_method",
+    "acceptable_drawdown",
+)
+_DRAWDOWN_PROFILE_EVIDENCE_FIELDS = (
+    "realized_drawdown",
+    "drawdown_duration",
+    "reasoning",
+)
+
 
 def _sync_stage_2_checks(routing: dict, kg_state: KGState) -> None:
     """Recompute active checks for Stage 2 from routing modulation.
@@ -1369,6 +1398,220 @@ def _ensure_stage_3_ready(schema: dict, kg_state: KGState) -> None:
         )
 
     _ensure_required_relations(3, schema, kg_state)
+
+
+# -----------------------------------------------------------------------------
+# Stage 4: Exit Mechanism
+# -----------------------------------------------------------------------------
+def _sync_stage_4_checks(routing: dict, kg_state: KGState) -> None:
+    stage_key = "stage_4"
+    modulation = routing.get("modulation", {})
+    active: set[str] = set()
+
+    for dimension, mapping in modulation.items():
+        if not isinstance(mapping, dict):
+            continue
+
+        current_value = kg_state.type_vector.get(dimension)
+        if current_value is None:
+            current_value = kg_state.deferred.get(dimension)
+        if current_value is None:
+            continue
+
+        value_mapping = mapping.get(current_value)
+        if not isinstance(value_mapping, dict):
+            continue
+
+        stage_mapping = value_mapping.get(stage_key)
+        if not isinstance(stage_mapping, dict):
+            continue
+
+        active.update(stage_mapping.get("add_checks", []) or [])
+
+    kg_state.set_checks(stage_key, sorted(active))
+
+
+def _sync_stage_4_gates(schema: dict, kg_state: KGState) -> None:
+    exit_policy = kg_state.entities.get("ExitPolicy", {})
+    drawdown = kg_state.entities.get("DrawdownProfile", {})
+
+    missing_exit_plan = [
+        field for field in _EXIT_POLICY_PLAN_FIELDS
+        if not _nonempty(exit_policy.get(field))
+    ]
+    if missing_exit_plan:
+        _set_gate_status(
+            kg_state,
+            "G4_P1",
+            "pending",
+            f"ExitPolicy plan fields incomplete: missing {missing_exit_plan}.",
+        )
+    else:
+        _set_gate_status(
+            kg_state,
+            "G4_P1",
+            "pass",
+            "ExitPolicy plan fields are defined.",
+        )
+
+    missing_drawdown_plan = [
+        field for field in _DRAWDOWN_PROFILE_PLAN_FIELDS
+        if not _nonempty(drawdown.get(field))
+    ]
+    if missing_drawdown_plan:
+        _set_gate_status(
+            kg_state,
+            "G4_P2",
+            "pending",
+            f"DrawdownProfile plan fields incomplete: missing {missing_drawdown_plan}.",
+        )
+    else:
+        _set_gate_status(
+            kg_state,
+            "G4_P2",
+            "pass",
+            "DrawdownProfile plan fields are defined.",
+        )
+
+    active = list(kg_state.active_checks.get("stage_4", []))
+    if not active:
+        _set_gate_status(
+            kg_state,
+            "G4_P3",
+            "pass",
+            "No Stage 4 checks are active for this route, so no per-check plan is required.",
+        )
+    else:
+        incomplete = []
+        for name in active:
+            check = kg_state.entities.get(name, {})
+            missing = [
+                field for field in _CHECK_PLAN_FIELDS
+                if not _nonempty(check.get(field))
+            ]
+            if missing:
+                incomplete.append(f"{name}: missing {missing}")
+        if incomplete:
+            _set_gate_status(
+                kg_state,
+                "G4_P3",
+                "pending",
+                "Plan fields incomplete — " + "; ".join(incomplete),
+            )
+        else:
+            _set_gate_status(
+                kg_state,
+                "G4_P3",
+                "pass",
+                f"All {len(active)} Stage 4 checks have plan fields defined.",
+            )
+
+    if exit_policy.get("exit_trigger_type") == "signal_reversal" and not _entity_exists(
+        kg_state,
+        "SignalScore",
+    ):
+        _set_gate_status(
+            kg_state,
+            "G4_P4",
+            "pending",
+            "signal_reversal exit requires SignalScore, but SignalScore is not defined.",
+        )
+    else:
+        _set_gate_status(
+            kg_state,
+            "G4_P4",
+            "pass",
+            "Exit trigger type is compatible with available signal context.",
+        )
+
+    missing_exit_ev = [
+        field for field in _EXIT_POLICY_EVIDENCE_FIELDS
+        if not _nonempty(exit_policy.get(field))
+    ]
+    if missing_exit_ev:
+        _set_gate_status(
+            kg_state,
+            "G4_E1",
+            "pending",
+            f"ExitPolicy evidence incomplete: missing {missing_exit_ev}.",
+        )
+    else:
+        _set_gate_status(
+            kg_state,
+            "G4_E1",
+            "pass",
+            "ExitPolicy evidence fields are filled.",
+        )
+
+    missing_drawdown_ev = [
+        field for field in _DRAWDOWN_PROFILE_EVIDENCE_FIELDS
+        if not _nonempty(drawdown.get(field))
+    ]
+    if missing_drawdown_ev:
+        _set_gate_status(
+            kg_state,
+            "G4_E2",
+            "pending",
+            f"DrawdownProfile evidence incomplete: missing {missing_drawdown_ev}.",
+        )
+    else:
+        _set_gate_status(
+            kg_state,
+            "G4_E2",
+            "pass",
+            "DrawdownProfile evidence fields are filled.",
+        )
+
+    if not active:
+        _set_gate_status(
+            kg_state,
+            "G4_E3",
+            "pending",
+            "No active Stage 4 checks yet.",
+        )
+    else:
+        incomplete_ev = []
+        for name in active:
+            check = kg_state.entities.get(name, {})
+            missing = _missing_check_evidence_fields(check)
+            if missing:
+                incomplete_ev.append(f"{name}: missing {missing}")
+        if incomplete_ev:
+            _set_gate_status(
+                kg_state,
+                "G4_E3",
+                "pending",
+                "Evidence incomplete — " + "; ".join(incomplete_ev),
+            )
+        else:
+            _set_gate_status(
+                kg_state,
+                "G4_E3",
+                "pass",
+                f"All {len(active)} Stage 4 checks have evidence fields filled.",
+            )
+
+
+def _ensure_stage_4_ready(schema: dict, kg_state: KGState) -> None:
+    plan_gates = [
+        gate["id"]
+        for gate in schema.get("gate_conditions", [])
+        if gate.get("kind") == "plan"
+    ]
+
+    unresolved = [
+        gid
+        for gid in plan_gates
+        if kg_state.gates.get(gid, {}).get("status") != "pass"
+    ]
+    if unresolved:
+        raise RuntimeValidationError(
+            "Stage 4 plan gates not passed: "
+            + ", ".join(unresolved)
+            + ". Evidence gates are advisory and may remain pending."
+        )
+
+    _ensure_required_relations(4, schema, kg_state)
 
 
 def _nonempty(value: Any) -> bool:

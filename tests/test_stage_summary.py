@@ -219,6 +219,41 @@ class StageSummaryTests(unittest.TestCase):
         self.assertEqual(snapshot["active_checks"], ["signal_decay_intraday"])
         self.assertEqual(snapshot["gates"]["passed_ids"], ["G3_0"])
 
+    def test_build_prompt_kg_snapshot_includes_stage_4_exit_context(self) -> None:
+        kg_state = KGState(
+            stage=4,
+            type_vector={"alpha_family": "event_driven"},
+            entities={
+                "Hypothesis": {"mechanism": "Event impact fades."},
+                "ExitPolicy": {
+                    "exit_trigger_type": "time_stop",
+                    "rationale": "Exit when event impact should be over.",
+                },
+                "DrawdownProfile": {
+                    "measurement_method": "Max drawdown during event window.",
+                },
+                "event_window_close": {"tests": "Hypothesis.mechanism"},
+            },
+            active_checks={"stage_4": ["event_window_close"]},
+            gates={
+                "G4_P1": {"status": "pass", "reason": "ok"},
+                "G4_P2": {"status": "pending", "reason": "missing drawdown"},
+            },
+        )
+
+        snapshot = build_prompt_kg_snapshot(4, kg_state)
+
+        self.assertEqual(
+            snapshot["entities"]["ExitPolicy"]["exit_trigger_type"],
+            "time_stop",
+        )
+        self.assertEqual(
+            snapshot["entities"]["DrawdownProfile"]["measurement_method"],
+            "Max drawdown during event window.",
+        )
+        self.assertEqual(snapshot["active_checks"], ["event_window_close"])
+        self.assertEqual(snapshot["gates"]["passed_ids"], ["G4_P1"])
+
     def test_format_stage_summaries_orders_by_stage(self) -> None:
         payload = {
             "stage_2": {"stage": 2, "name": "decomposition"},

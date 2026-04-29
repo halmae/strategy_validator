@@ -68,6 +68,8 @@ modulation:
         add_checks: [latency_modeling, fill_rate_analysis, queue_position_sensitivity]
       stage_3:
         add_checks: [signal_decay_intraday]
+      stage_4:
+        add_checks: [eod_close_policy]
     daily:
       stage_5:
         add_checks: [fill_rate_analysis]
@@ -87,14 +89,20 @@ modulation:
         add_checks: [pair_selection_bias]
       stage_3:
         add_checks: [spread_signal_quality]
+      stage_4:
+        add_checks: [mean_reversion_timeout]
     carry:
       stage_1:
         add_checks: [risk_premium_decomposition]
+      stage_4:
+        add_checks: [carry_collection_horizon]
     event_driven:
       stage_2:
         add_checks: [event_definition_consistency, look_ahead_event_timing]
       stage_3:
         add_checks: [event_signal_alignment]
+      stage_4:
+        add_checks: [event_window_close]
     cross_sectional_factor:
       stage_3:
         add_checks: [ic_stability]
@@ -106,6 +114,8 @@ modulation:
     market_neutral:
       stage_1:
         add_checks: [beta_neutrality_assumption]
+      stage_4:
+        add_checks: [rebalance_frequency_alignment]
       stage_5:
         add_checks: [hedge_ratio_stability]
     long_short:
@@ -116,6 +126,11 @@ modulation:
     semi_systematic:
       stage_5:
         add_checks: [manual_override_audit, rule_exception_log_review]
+
+  asset_class:
+    futures:
+      stage_4:
+        add_checks: [roll_timing_consistency]
 
   # signal_source lives in kg_state.deferred (resolved in Stage 2 entry)
   # Runtime must check BOTH type_vector and deferred when evaluating modulation.

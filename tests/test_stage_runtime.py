@@ -13,8 +13,9 @@ class StageRuntimeTests(unittest.TestCase):
         cls.stage_1_schema = load_schema("stage_1")
         cls.stage_2_schema = load_schema("stage_2")
         cls.stage_3_schema = load_schema("stage_3")
+        cls.stage_4_schema = load_schema("stage_4")
         cls.routing = load_schema("routing")
-        cls.max_implemented_stage = 3
+        cls.max_implemented_stage = 4
 
     def process_call(self, name: str, args: dict, kg_state: KGState, stage: int, schema: dict) -> str:
         return process_function_call(
@@ -304,13 +305,13 @@ class StageRuntimeTests(unittest.TestCase):
             schema=self.stage_2_schema,
         )
 
-        self.assertIn("not implemented yet", result)
+        self.assertIn("Stage 2 -> 4", result)
         self.assertIn(
             "Requested Stage 3, but routing resolved next stage to 4.",
             result,
         )
-        self.assertEqual(kg_state.stage, 2)
-        self.assertTrue(kg_state.workflow_complete)
+        self.assertEqual(kg_state.stage, 4)
+        self.assertFalse(kg_state.workflow_complete)
         self.assertIn(2, kg_state.completed_stages)
         self.assertIn(3, kg_state.skipped_stages)
 
@@ -644,9 +645,9 @@ class StageRuntimeTests(unittest.TestCase):
             schema=self.stage_3_schema,
         )
 
-        self.assertIn("Stage 4 is not implemented yet", result)
-        self.assertEqual(kg_state.stage, 3)
-        self.assertTrue(kg_state.workflow_complete)
+        self.assertIn("Stage 3 -> 4", result)
+        self.assertEqual(kg_state.stage, 4)
+        self.assertFalse(kg_state.workflow_complete)
         self.assertIn(3, kg_state.completed_stages)
         self.assertIn(
             {
@@ -748,6 +749,208 @@ class StageRuntimeTests(unittest.TestCase):
 
         with self.assertRaises(RuntimeValidationError):
             sync_runtime_state(3, schema, self.routing, kg_state)
+
+    def test_stage_4_activates_exit_checks_from_routing(self) -> None:
+        kg_state = KGState(
+            stage=4,
+            type_vector={
+                "alpha_family": "stat_arb",
+                "exposure_structure": "market_neutral",
+                "asset_class": "futures",
+                "market_scope": "us",
+                "decision_cadence": "quarterly_plus",
+                "execution_mode": "systematic",
+            },
+        )
+
+        sync_runtime_state(4, self.stage_4_schema, self.routing, kg_state)
+
+        self.assertEqual(
+            kg_state.active_checks["stage_4"],
+            [
+                "drawdown_duration_analysis",
+                "mean_reversion_timeout",
+                "rebalance_frequency_alignment",
+                "roll_timing_consistency",
+            ],
+        )
+
+    def test_stage_4_plan_gates_can_advance_with_evidence_pending(self) -> None:
+        kg_state = KGState(
+            stage=4,
+            type_vector={
+                "alpha_family": "cross_sectional_factor",
+                "exposure_structure": "long_only",
+                "asset_class": "equity",
+                "market_scope": "us",
+                "decision_cadence": "daily",
+                "execution_mode": "systematic",
+            },
+            entities={
+                "Hypothesis": {
+                    "claim": "Slow repricing persists after signal observation.",
+                    "mechanism": "Investors underreact until the repricing window closes.",
+                    "falsification_condition": "No abnormal return remains after five days.",
+                },
+                "Edge": {"horizon": "5 days"},
+                "ExitPolicy": {
+                    "exit_trigger_type": "time_stop",
+                    "rationale": "Exit after the repricing window should have closed.",
+                    "failure_mode_addressed": "If no abnormal return appears after five days, the thesis failed.",
+                    "expected_holding_period": "5 trading days",
+                },
+                "DrawdownProfile": {
+                    "measurement_method": "Measure max drawdown during each holding window.",
+                    "acceptable_drawdown": "Max single-position drawdown should stay below 8%.",
+                },
+            },
+        )
+
+        sync_runtime_state(4, self.stage_4_schema, self.routing, kg_state)
+
+        self.assertEqual(kg_state.gates["G4_P1"]["status"], "pass")
+        self.assertEqual(kg_state.gates["G4_P2"]["status"], "pass")
+        self.assertEqual(kg_state.gates["G4_P3"]["status"], "pass")
+        self.assertEqual(kg_state.gates["G4_P4"]["status"], "pass")
+        self.assertEqual(kg_state.gates["G4_E1"]["status"], "pending")
+        self.assertEqual(kg_state.gates["G4_E2"]["status"], "pending")
+
+        result = self.process_call(
+            "advance_stage",
+            {"from_stage": 4, "to_stage": 5, "summary": "stage done"},
+            kg_state,
+            stage=4,
+            schema=self.stage_4_schema,
+        )
+
+        self.assertIn("Stage 5 is not implemented yet", result)
+        self.assertEqual(kg_state.stage, 4)
+        self.assertTrue(kg_state.workflow_complete)
+        self.assertIn(4, kg_state.completed_stages)
+        self.assertIn(
+            {
+                "stage": 4,
+                "subject": "ExitPolicy",
+                "predicate": "terminates",
+                "object": "Hypothesis.mechanism",
+                "object_value": "Investors underreact until the repricing window closes.",
+                "scope": "semantic",
+            },
+            kg_state.relations,
+        )
+
+    def test_stage_4_signal_reversal_requires_signal_score(self) -> None:
+        kg_state = KGState(
+            stage=4,
+            type_vector={
+                "alpha_family": "cross_sectional_factor",
+                "exposure_structure": "long_only",
+                "asset_class": "equity",
+                "market_scope": "us",
+                "decision_cadence": "daily",
+                "execution_mode": "systematic",
+            },
+            entities={
+                "Hypothesis": {
+                    "mechanism": "Signal predicts short-lived repricing.",
+                },
+                "ExitPolicy": {
+                    "exit_trigger_type": "signal_reversal",
+                    "rationale": "Exit when the entry signal reverses.",
+                    "failure_mode_addressed": "Signal reversal means the original edge has ended.",
+                    "expected_holding_period": "Until signal reversal.",
+                },
+                "DrawdownProfile": {
+                    "measurement_method": "Measure drawdown until signal reversal.",
+                    "acceptable_drawdown": "Max drawdown below 8%.",
+                },
+            },
+        )
+
+        sync_runtime_state(4, self.stage_4_schema, self.routing, kg_state)
+
+        self.assertEqual(kg_state.gates["G4_P4"]["status"], "pending")
+
+        result = self.process_call(
+            "advance_stage",
+            {"from_stage": 4, "to_stage": 5, "summary": "stage done"},
+            kg_state,
+            stage=4,
+            schema=self.stage_4_schema,
+        )
+
+        self.assertIn("G4_P4", result)
+        self.assertFalse(kg_state.workflow_complete)
+
+    def test_stage_4_signal_reversal_passes_when_signal_score_exists(self) -> None:
+        kg_state = KGState(
+            stage=4,
+            type_vector={
+                "alpha_family": "cross_sectional_factor",
+                "exposure_structure": "long_only",
+                "asset_class": "equity",
+                "market_scope": "us",
+                "decision_cadence": "daily",
+                "execution_mode": "systematic",
+            },
+            entities={
+                "SignalScore": {"definition": "Ranked factor score."},
+                "ExitPolicy": {
+                    "exit_trigger_type": "signal_reversal",
+                    "rationale": "Exit when the score reverses.",
+                    "failure_mode_addressed": "Reversal means the ranking edge has ended.",
+                    "expected_holding_period": "Until score reversal.",
+                },
+                "DrawdownProfile": {
+                    "measurement_method": "Measure drawdown until score reversal.",
+                    "acceptable_drawdown": "Max drawdown below 8%.",
+                },
+            },
+        )
+
+        sync_runtime_state(4, self.stage_4_schema, self.routing, kg_state)
+
+        self.assertEqual(kg_state.gates["G4_P4"]["status"], "pass")
+
+    def test_stage_4_blocks_until_active_check_plans_are_defined(self) -> None:
+        kg_state = KGState(
+            stage=4,
+            type_vector={
+                "alpha_family": "event_driven",
+                "exposure_structure": "long_only",
+                "asset_class": "equity",
+                "market_scope": "korea",
+                "decision_cadence": "daily",
+                "execution_mode": "systematic",
+            },
+            entities={
+                "Hypothesis": {"mechanism": "Event impact fades after the window closes."},
+                "ExitPolicy": {
+                    "exit_trigger_type": "time_stop",
+                    "rationale": "Exit after event impact window closes.",
+                    "failure_mode_addressed": "No repricing after the window means thesis failure.",
+                    "expected_holding_period": "3 trading days",
+                },
+                "DrawdownProfile": {
+                    "measurement_method": "Event-window max drawdown.",
+                    "acceptable_drawdown": "Below 10%.",
+                },
+            },
+        )
+
+        sync_runtime_state(4, self.stage_4_schema, self.routing, kg_state)
+
+        self.assertEqual(kg_state.active_checks["stage_4"], ["event_window_close"])
+
+        result = self.process_call(
+            "advance_stage",
+            {"from_stage": 4, "to_stage": 5, "summary": "stage done"},
+            kg_state,
+            stage=4,
+            schema=self.stage_4_schema,
+        )
+
+        self.assertIn("G4_P3", result)
 
 
 if __name__ == "__main__":

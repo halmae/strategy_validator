@@ -144,6 +144,38 @@ def _resolved_facts(stage: int, kg_state: KGState) -> dict:
             "check_plans": check_plans,
         }
 
+    if stage == 4:
+        active_checks = kg_state.active_checks.get("stage_4", [])
+        check_plans = {
+            name: _meaningful_fields(
+                kg_state.entities.get(name, {}),
+                ("tests", "evidence_type", "criterion", "method"),
+            )
+            for name in active_checks
+        }
+        return {
+            "exit_policy": _meaningful_fields(
+                kg_state.entities.get("ExitPolicy", {}),
+                (
+                    "exit_trigger_type",
+                    "rationale",
+                    "failure_mode_addressed",
+                    "expected_holding_period",
+                    "supports_hypothesis",
+                ),
+            ),
+            "drawdown_profile": _meaningful_fields(
+                kg_state.entities.get("DrawdownProfile", {}),
+                (
+                    "measurement_method",
+                    "acceptable_drawdown",
+                    "realized_drawdown",
+                    "drawdown_duration",
+                ),
+            ),
+            "check_plans": check_plans,
+        }
+
     return {}
 
 
@@ -187,6 +219,27 @@ def _key_rationale(stage: int, kg_state: KGState) -> list[str]:
             )
         )
         for name in kg_state.active_checks.get("stage_3", []):
+            rationale.extend(
+                _collect_strings(
+                    kg_state.entities.get(name, {}),
+                    ("evidence_summary", "reasoning"),
+                )
+            )
+
+    if stage == 4:
+        rationale.extend(
+            _collect_strings(
+                kg_state.entities.get("ExitPolicy", {}),
+                ("rationale", "failure_mode_addressed", "reasoning"),
+            )
+        )
+        rationale.extend(
+            _collect_strings(
+                kg_state.entities.get("DrawdownProfile", {}),
+                ("acceptable_drawdown", "reasoning"),
+            )
+        )
+        for name in kg_state.active_checks.get("stage_4", []):
             rationale.extend(
                 _collect_strings(
                     kg_state.entities.get(name, {}),
@@ -316,6 +369,14 @@ def _prompt_entities(stage: int, kg_state: KGState) -> dict:
 
     if stage >= 3:
         for check_name in kg_state.active_checks.get("stage_3", []):
+            if kg_state.entities.get(check_name):
+                entities[check_name] = kg_state.entities[check_name]
+
+    if stage >= 4:
+        for name in ("ExitPolicy", "DrawdownProfile"):
+            if kg_state.entities.get(name):
+                entities[name] = kg_state.entities[name]
+        for check_name in kg_state.active_checks.get("stage_4", []):
             if kg_state.entities.get(check_name):
                 entities[check_name] = kg_state.entities[check_name]
 

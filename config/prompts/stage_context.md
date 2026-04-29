@@ -9,6 +9,9 @@
 ## Routing Snapshot
 {routing_yaml}
 
+## Market Constraints Context
+{market_constraints_yaml}
+
 ## Completed Stage Summaries
 {stage_summaries_json}
 

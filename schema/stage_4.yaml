@@ -1,0 +1,238 @@
+# =============================================================================
+# Stage 4: Exit Mechanism
+# =============================================================================
+# Purpose:
+#   Validate that the strategy exits when the Stage 1 edge mechanism has
+#   plausibly ended, failed, or become too risky to continue holding.
+#
+# Design principles:
+#   - This stage asks: "When does the reason to hold disappear?"
+#   - ExitPolicy is the central artifact. It must explain why the exit rule is
+#     aligned with Hypothesis.mechanism and Hypothesis.falsification_condition.
+#   - DrawdownProfile captures whether losses and holding time are consistent
+#     with Edge.horizon and market constraints.
+#   - Gates follow Stage 2/3's PLAN / EVIDENCE split. Plan gates are blocking;
+#     evidence gates are advisory while empirical work is pending.
+# =============================================================================
+
+stage: 4
+name: exit_mechanism
+depends_on: stage_3
+
+summary:
+  objective: "Define and validate the exit policy that terminates exposure when the edge mechanism ends or fails."
+  next_stage_handoff:
+    - "Use ExitPolicy.exit_trigger_type and rationale to define execution-stage order behavior."
+    - "Use realized_holding_period and DrawdownProfile to calibrate time-stop, stop-loss, and take-profit assumptions."
+    - "Market constraints should be considered when judging stop-loss and take-profit feasibility."
+
+# -----------------------------------------------------------------------------
+# KG Entities
+# -----------------------------------------------------------------------------
+entities:
+
+  ExitPolicy:
+    description: >
+      The rule or rule-combination that exits the position when the edge
+      mechanism ends, fails, reverses, or reaches a risk boundary.
+    properties:
+      exit_trigger_type:
+        type: enum
+        values: [signal_reversal, time_stop, stop_loss, take_profit, mixed]
+        required: true
+        gate_kind: plan
+      rationale:
+        type: str
+        required: true
+        gate_kind: plan
+        note: "Why this exit aligns with Hypothesis.mechanism."
+      failure_mode_addressed:
+        type: str
+        required: true
+        gate_kind: plan
+        note: "Which falsification or failure mode this exit contains."
+      expected_holding_period:
+        type: str
+        required: true
+        gate_kind: plan
+        note: "Intended holding period implied by the exit policy."
+
+      realized_holding_period:
+        type: str
+        required: false
+        gate_kind: evidence
+      supports_hypothesis:
+        type: enum
+        values: [supports, contradicts, inconclusive]
+        required: false
+        gate_kind: evidence
+      reasoning:
+        type: str
+        required: false
+        gate_kind: evidence
+
+  DrawdownProfile:
+    description: >
+      The observed or planned drawdown behavior of the strategy while waiting
+      for the exit to fire.
+    properties:
+      measurement_method:
+        type: str
+        required: true
+        gate_kind: plan
+      acceptable_drawdown:
+        type: str
+        required: true
+        gate_kind: plan
+      realized_drawdown:
+        type: str
+        required: false
+        gate_kind: evidence
+      drawdown_duration:
+        type: str
+        required: false
+        gate_kind: evidence
+      reasoning:
+        type: str
+        required: false
+        gate_kind: evidence
+
+  Check:
+    description: >
+      Generic exit-mechanism check entity. One per activated check name.
+      Each check must declare what exit, horizon, market, or hypothesis claim it tests.
+    applies_to: "Any name in active_checks['stage_4']"
+    properties:
+      tests:
+        type: str
+        required: true
+        gate_kind: plan
+      evidence_type:
+        type: enum
+        values: [attestation, quantitative, artifact_ref]
+        required: true
+        gate_kind: plan
+      criterion:
+        type: str
+        required: true
+        gate_kind: plan
+      method:
+        type: str
+        required: true
+        gate_kind: plan
+
+      evidence_summary:
+        type: str
+        required: false
+        gate_kind: evidence
+      metrics:
+        type: str
+        required: false
+        gate_kind: evidence
+      artifact_ref:
+        type: str
+        required: false
+        gate_kind: evidence
+      passes_criterion:
+        type: bool
+        required: false
+        gate_kind: evidence
+      reasoning:
+        type: str
+        required: false
+        gate_kind: evidence
+
+# -----------------------------------------------------------------------------
+# Relationships
+# -----------------------------------------------------------------------------
+relationships:
+  - kind: fixed
+    predicate: terminates
+    subject: ExitPolicy
+    object_ref: Hypothesis.mechanism
+    required: true
+    scope: semantic
+  - kind: fixed
+    predicate: contains_failure_mode
+    subject: ExitPolicy
+    object_ref: Hypothesis.falsification_condition
+    required: false
+    scope: semantic
+  - kind: mapped_field_predicate
+    subject: ExitPolicy
+    predicate_field: supports_hypothesis
+    predicate_values:
+      supports: supports
+      contradicts: contradicts
+      inconclusive: inconclusive
+    object_ref: Hypothesis.claim
+    required: false
+    scope: semantic
+  - kind: active_check_field
+    predicate: tests
+    field: tests
+    required_per_active_check: true
+    scope: semantic
+
+# -----------------------------------------------------------------------------
+# Gate conditions
+# -----------------------------------------------------------------------------
+gate_conditions:
+  - id: G4_P1
+    kind: plan
+    description: "ExitPolicy plan fields are defined"
+    check: "ExitPolicy.exit_trigger_type, rationale, failure_mode_addressed, expected_holding_period defined"
+
+  - id: G4_P2
+    kind: plan
+    description: "DrawdownProfile plan fields are defined"
+    check: "DrawdownProfile.measurement_method and acceptable_drawdown defined"
+
+  - id: G4_P3
+    kind: plan
+    description: "Every activated exit Check has tests, evidence_type, criterion, method defined"
+    check: "all plan fields defined for each active Check entity"
+
+  - id: G4_P4
+    kind: plan
+    description: "signal_reversal exits require SignalScore"
+    check: "ExitPolicy.exit_trigger_type != signal_reversal or SignalScore exists"
+
+  - id: G4_E1
+    kind: evidence
+    description: "ExitPolicy evidence fields are filled and judged"
+    check: "ExitPolicy evidence fields defined"
+    advisory: true
+
+  - id: G4_E2
+    kind: evidence
+    description: "DrawdownProfile evidence fields are filled"
+    check: "DrawdownProfile evidence fields defined"
+    advisory: true
+
+  - id: G4_E3
+    kind: evidence
+    description: "Every activated exit Check has evidence fields"
+    check: "all evidence fields defined for each active Check entity"
+    advisory: true
+
+# -----------------------------------------------------------------------------
+# Agent behavior
+# -----------------------------------------------------------------------------
+agent:
+  goal: >
+    Define an exit policy that ends exposure when the original edge mechanism
+    has ended, failed, or become too risky. Keep evidence pending when empirical
+    drawdown or holding-period analysis is not yet available.
+
+  stage_flow:
+    - step: 1
+      action: "Define ExitPolicy.exit_trigger_type and rationale by referencing Hypothesis.mechanism."
+    - step: 2
+      action: "Define failure_mode_addressed using Hypothesis.falsification_condition where possible."
+    - step: 3
+      action: "Define DrawdownProfile measurement method and acceptable drawdown."
+    - step: 4
+      action: "For each activated Check: establish tests, evidence_type, criterion, and method."
+    - step: 5
+      action: "Fill evidence fields when available; otherwise leave evidence gates pending."

@@ -4,7 +4,7 @@ from types import SimpleNamespace
 from google.genai import types
 
 from agent.kg_store import KGState
-from agent.runner import run_turn
+from agent.runner import build_market_constraints_snapshot, run_turn
 from agent.schema_loader import load_schema
 
 
@@ -101,6 +101,29 @@ class RunnerTests(unittest.TestCase):
             contents[-2].parts[0].function_response.name,
             "update_type_vector",
         )
+
+    def test_market_constraints_snapshot_activates_from_stage_4(self) -> None:
+        kg_state = KGState(
+            stage=4,
+            type_vector={"market_scope": "korea"},
+        )
+
+        snapshot = build_market_constraints_snapshot(4, self.routing, kg_state)
+
+        self.assertTrue(snapshot["active"])
+        self.assertEqual(snapshot["market_scope"], "korea")
+        self.assertIn("KOSPI", snapshot["markets"])
+        self.assertIn("KOSDAQ", snapshot["markets"])
+
+    def test_market_constraints_snapshot_is_inactive_before_stage_4(self) -> None:
+        kg_state = KGState(
+            stage=3,
+            type_vector={"market_scope": "korea"},
+        )
+
+        snapshot = build_market_constraints_snapshot(3, self.routing, kg_state)
+
+        self.assertFalse(snapshot["active"])
 
 
 if __name__ == "__main__":
