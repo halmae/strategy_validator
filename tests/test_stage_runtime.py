@@ -55,6 +55,22 @@ class StageRuntimeTests(unittest.TestCase):
         self.assertEqual(result, "Stage 0 has no gates; mark_gate ignored.")
         self.assertEqual(kg_state.gates, {})
 
+    def test_stage_0_out_of_scope_reason_uses_user_facing_message(self) -> None:
+        kg_state = KGState(
+            stage=0,
+            type_vector={"execution_mode": "discretionary"},
+        )
+
+        sync_runtime_state(0, self.classification_schema, self.routing, kg_state)
+
+        self.assertTrue(kg_state.out_of_scope)
+        self.assertEqual(
+            kg_state.out_of_scope_reason,
+            "Discretionary 전략은 이 시스템의 검증 범위 밖입니다. "
+            "Signal을 rule로 표현 가능한 경우 semi_systematic으로 재분류하세요.",
+        )
+        self.assertNotIn("Warn the user", kg_state.out_of_scope_reason)
+
     def test_stage_1_checks_are_activated_from_routing(self) -> None:
         kg_state = KGState(
             stage=1,

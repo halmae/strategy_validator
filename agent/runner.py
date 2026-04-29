@@ -189,8 +189,8 @@ def build_market_constraints_snapshot(stage: int, routing: dict, kg_state: KGSta
         }
 
     market_scope = kg_state.type_vector.get("market_scope")
-    markets = _markets_for_scope(routing, market_scope)
     constraint_map = constraints.get("markets", {})
+    markets = _markets_for_scope(routing, market_scope, constraint_map)
     selected = {
         market: constraint_map[market]
         for market in markets
@@ -213,7 +213,11 @@ def build_market_constraints_snapshot(stage: int, routing: dict, kg_state: KGSta
     }
 
 
-def _markets_for_scope(routing: dict, market_scope: str | None) -> list[str]:
+def _markets_for_scope(
+    routing: dict,
+    market_scope: str | None,
+    constraint_map: dict,
+) -> list[str]:
     if not market_scope:
         return []
     market_modulation = routing.get("modulation", {}).get("market_scope", {})
@@ -224,6 +228,8 @@ def _markets_for_scope(routing: dict, market_scope: str | None) -> list[str]:
     if isinstance(mapped, str):
         return [mapped]
     if mapped is None and market_scope in mapping:
+        if market_scope in constraint_map:
+            return [market_scope]
         return []
     return [market_scope]
 

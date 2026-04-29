@@ -137,6 +137,17 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(snapshot["markets"], {})
         self.assertIn("No specific markets", snapshot["note"])
 
+    def test_market_constraints_snapshot_uses_scope_fallback_when_constraint_exists(self) -> None:
+        kg_state = KGState(
+            stage=4,
+            type_vector={"market_scope": "global"},
+        )
+
+        snapshot = build_market_constraints_snapshot(4, self.routing, kg_state)
+
+        self.assertTrue(snapshot["active"])
+        self.assertIn("global", snapshot["markets"])
+
 
 if __name__ == "__main__":
     unittest.main()

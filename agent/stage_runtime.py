@@ -394,14 +394,19 @@ def _sync_stage0_scope_status(schema: dict, kg_state: KGState) -> None:
 
     if execution_mode in out_of_scope:
         kg_state.out_of_scope = True
-        kg_state.out_of_scope_reason = policy.get(
-            "on_detect",
-            policy.get("reason", "This strategy is out of scope."),
-        ).strip()
+        kg_state.out_of_scope_reason = _scope_policy_message(policy)
         return
 
     kg_state.out_of_scope = False
     kg_state.out_of_scope_reason = ""
+
+
+def _scope_policy_message(policy: dict) -> str:
+    on_detect = str(policy.get("on_detect", "")).strip()
+    match = re.search(r'Message:\s*"(.+?)"\s*$', on_detect, flags=re.DOTALL)
+    if match:
+        return " ".join(match.group(1).split())
+    return str(policy.get("reason", "This strategy is out of scope.")).strip()
 
 
 def _sync_stage_1_checks(schema: dict, routing: dict, kg_state: KGState) -> None:
