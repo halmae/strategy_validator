@@ -191,14 +191,20 @@ def build_market_constraints_snapshot(stage: int, routing: dict, kg_state: KGSta
         for market in markets
         if market in constraint_map
     }
+    note = (
+        "Reference facts only. Use these to judge exit feasibility; "
+        "do not treat them as user-provided evidence."
+    )
+    active = bool(selected)
+    if not markets:
+        note += " No specific markets are defined for this market_scope."
+    elif not selected:
+        note += " No market_constraints entries matched the routed markets."
     return {
-        "active": True,
+        "active": active,
         "market_scope": market_scope,
         "markets": selected,
-        "note": (
-            "Reference facts only. Use these to judge exit feasibility; "
-            "do not treat them as user-provided evidence."
-        ),
+        "note": note,
     }
 
 
@@ -212,6 +218,8 @@ def _markets_for_scope(routing: dict, market_scope: str | None) -> list[str]:
         return list(mapped)
     if isinstance(mapped, str):
         return [mapped]
+    if mapped is None and market_scope in mapping:
+        return []
     return [market_scope]
 
 

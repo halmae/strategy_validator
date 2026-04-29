@@ -61,6 +61,7 @@ entities:
         type: str
         required: false
         gate_kind: evidence
+        note: "Use exact text 'not applicable' only if holding-period evidence is unsuitable."
       supports_hypothesis:
         type: enum
         values: [supports, contradicts, inconclusive]
@@ -88,10 +89,12 @@ entities:
         type: str
         required: false
         gate_kind: evidence
+        note: "Use exact text 'not applicable' only if drawdown evidence is unsuitable."
       drawdown_duration:
         type: str
         required: false
         gate_kind: evidence
+        note: "Use exact text 'not applicable' only if drawdown-duration evidence is unsuitable."
       reasoning:
         type: str
         required: false

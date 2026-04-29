@@ -882,6 +882,25 @@ class StageRuntimeTests(unittest.TestCase):
         self.assertIn("G4_P4", result)
         self.assertFalse(kg_state.workflow_complete)
 
+    def test_stage_4_signal_reversal_gate_is_pending_until_trigger_type_defined(self) -> None:
+        kg_state = KGState(
+            stage=4,
+            entities={
+                "DrawdownProfile": {
+                    "measurement_method": "Measure holding-window drawdown.",
+                    "acceptable_drawdown": "Below 8%.",
+                },
+            },
+        )
+
+        sync_runtime_state(4, self.stage_4_schema, self.routing, kg_state)
+
+        self.assertEqual(kg_state.gates["G4_P4"]["status"], "pending")
+        self.assertIn(
+            "exit_trigger_type",
+            kg_state.gates["G4_P4"]["reason"],
+        )
+
     def test_stage_4_signal_reversal_passes_when_signal_score_exists(self) -> None:
         kg_state = KGState(
             stage=4,
@@ -951,6 +970,42 @@ class StageRuntimeTests(unittest.TestCase):
         )
 
         self.assertIn("G4_P3", result)
+
+    def test_stage_4_evidence_accepts_explicit_not_applicable_text(self) -> None:
+        kg_state = KGState(
+            stage=4,
+            type_vector={
+                "alpha_family": "cross_sectional_factor",
+                "exposure_structure": "long_only",
+                "asset_class": "equity",
+                "market_scope": "us",
+                "decision_cadence": "daily",
+                "execution_mode": "systematic",
+            },
+            entities={
+                "ExitPolicy": {
+                    "exit_trigger_type": "time_stop",
+                    "rationale": "Exit after the expected repricing window.",
+                    "failure_mode_addressed": "No repricing after the window.",
+                    "expected_holding_period": "5 trading days",
+                    "realized_holding_period": "not applicable",
+                    "supports_hypothesis": "inconclusive",
+                    "reasoning": "Holding-period evidence is not available yet.",
+                },
+                "DrawdownProfile": {
+                    "measurement_method": "Measure window drawdown.",
+                    "acceptable_drawdown": "Below 8%.",
+                    "realized_drawdown": "not applicable",
+                    "drawdown_duration": "not applicable",
+                    "reasoning": "Drawdown evidence is not available yet.",
+                },
+            },
+        )
+
+        sync_runtime_state(4, self.stage_4_schema, self.routing, kg_state)
+
+        self.assertEqual(kg_state.gates["G4_E1"]["status"], "pass")
+        self.assertEqual(kg_state.gates["G4_E2"]["status"], "pass")
 
 
 if __name__ == "__main__":

@@ -1506,7 +1506,15 @@ def _sync_stage_4_gates(schema: dict, kg_state: KGState) -> None:
                 f"All {len(active)} Stage 4 checks have plan fields defined.",
             )
 
-    if exit_policy.get("exit_trigger_type") == "signal_reversal" and not _entity_exists(
+    exit_trigger_type = exit_policy.get("exit_trigger_type")
+    if not _nonempty(exit_trigger_type):
+        _set_gate_status(
+            kg_state,
+            "G4_P4",
+            "pending",
+            "ExitPolicy.exit_trigger_type is not defined yet.",
+        )
+    elif exit_trigger_type == "signal_reversal" and not _entity_exists(
         kg_state,
         "SignalScore",
     ):

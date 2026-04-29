@@ -125,6 +125,18 @@ class RunnerTests(unittest.TestCase):
 
         self.assertFalse(snapshot["active"])
 
+    def test_market_constraints_snapshot_is_inactive_for_empty_scope_mapping(self) -> None:
+        kg_state = KGState(
+            stage=4,
+            type_vector={"market_scope": "developed_ex_us"},
+        )
+
+        snapshot = build_market_constraints_snapshot(4, self.routing, kg_state)
+
+        self.assertFalse(snapshot["active"])
+        self.assertEqual(snapshot["markets"], {})
+        self.assertIn("No specific markets", snapshot["note"])
+
 
 if __name__ == "__main__":
     unittest.main()
