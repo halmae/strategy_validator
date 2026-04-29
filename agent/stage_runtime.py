@@ -147,6 +147,19 @@ def attempt_stage_advance(
             f"but advance requested from {from_stage}"
         )
 
+    sync_runtime_state(kg_state.stage, schema, routing, kg_state)
+
+    if from_stage == 0:
+        _ensure_stage_0_ready(schema, kg_state)
+    elif from_stage == 1:
+        _ensure_stage_1_ready(schema, kg_state)
+    elif from_stage == 2:
+        _ensure_stage_2_ready(schema, kg_state)
+    elif from_stage == 3:
+        _ensure_stage_3_ready(schema, kg_state)
+    else:
+        raise RuntimeValidationError(f"Stage {from_stage} is not supported yet")
+
     prerequisite_messages = _missing_prerequisite_messages(
         from_stage,
         routing,
@@ -166,19 +179,6 @@ def attempt_stage_advance(
             f"Next routed stage is {resolved_to_stage}."
         )
 
-    sync_runtime_state(kg_state.stage, schema, routing, kg_state)
-
-    if from_stage == 0:
-        _ensure_stage_0_ready(schema, kg_state)
-    elif from_stage == 1:
-        _ensure_stage_1_ready(schema, kg_state)
-    elif from_stage == 2:
-        _ensure_stage_2_ready(schema, kg_state)
-    elif from_stage == 3:
-        _ensure_stage_3_ready(schema, kg_state)
-    else:
-        raise RuntimeValidationError(f"Stage {from_stage} is not supported yet")
-
     kg_state.mark_stage_completed(from_stage)
 
     skipped = [
@@ -196,12 +196,7 @@ def attempt_stage_advance(
             if skipped
             else ""
         )
-        requested_note = (
-            f" Requested Stage {to_stage}, but routing resolved next stage "
-            f"to {resolved_to_stage}."
-            if to_stage != resolved_to_stage
-            else ""
-        )
+        requested_note = _stage_request_note(to_stage, resolved_to_stage)
         return (
             f"Stage {from_stage} complete.{skip_note} "
             f"Stage {resolved_to_stage} is not implemented yet.{requested_note}"
@@ -211,17 +206,21 @@ def attempt_stage_advance(
     kg_state.workflow_complete = False
     if skipped:
         skipped_text = ", ".join(str(stage_id) for stage_id in skipped)
-        requested_note = (
-            f" Requested Stage {to_stage}, but routing resolved next stage "
-            f"to {resolved_to_stage}."
-            if to_stage != resolved_to_stage
-            else ""
-        )
+        requested_note = _stage_request_note(to_stage, resolved_to_stage)
         return (
             f"Stage {from_stage} -> {resolved_to_stage} "
             f"(skipped {skipped_text}).{requested_note}"
         )
     return f"Stage {from_stage} -> {resolved_to_stage}"
+
+
+def _stage_request_note(requested_stage: int, resolved_stage: int) -> str:
+    if requested_stage == resolved_stage:
+        return ""
+    return (
+        f" Requested Stage {requested_stage}, but routing resolved next stage "
+        f"to {resolved_stage}."
+    )
 
 
 def _next_stage_after(from_stage: int, routing: dict, kg_state: KGState) -> int:
@@ -273,6 +272,8 @@ def _routing_max_stage(routing: dict) -> int:
 def _route_condition_matches(condition: dict, kg_state: KGState) -> bool:
     entity_name = condition.get("kg_entity_exists")
     if entity_name:
+        # Route condition keys are mutually exclusive in the current schema:
+        # kg_entity_exists OR scalar matches against type_vector/deferred.
         return _entity_exists(kg_state, entity_name)
     for key, expected in condition.items():
         actual = kg_state.type_vector.get(key)
@@ -288,8 +289,11 @@ def _missing_prerequisite_messages(
     routing: dict,
     kg_state: KGState,
 ) -> list[str]:
-    next_stage = from_stage + 1
-    rule_entities = _rule_entities_for_stage(next_stage, routing)
+    resolved_to_stage = _next_stage_after(from_stage, routing, kg_state)
+    stages_to_check = range(from_stage + 1, resolved_to_stage + 1)
+    rule_entities = set()
+    for stage in stages_to_check:
+        rule_entities.update(_rule_entities_for_stage(stage, routing))
     messages: list[str] = []
 
     for prerequisite in routing.get("prerequisites", []) or []:
@@ -305,7 +309,9 @@ def _missing_prerequisite_messages(
         if message:
             messages.append(message)
         else:
-            messages.append(f"{required_entity} is required before Stage {next_stage}.")
+            messages.append(
+                f"{required_entity} is required before Stage {resolved_to_stage}."
+            )
 
     return messages
 

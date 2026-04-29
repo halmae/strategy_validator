@@ -359,6 +359,37 @@ class StageRuntimeTests(unittest.TestCase):
         self.assertIn("SignalScore", result)
         self.assertEqual(kg_state.stage, 2)
 
+    def test_stage_gate_errors_take_priority_over_prerequisite_errors(self) -> None:
+        kg_state = KGState(
+            stage=2,
+            type_vector={
+                "alpha_family": "event_driven",
+                "exposure_structure": "long_only",
+                "asset_class": "equity",
+                "market_scope": "korea",
+                "decision_cadence": "daily",
+                "execution_mode": "systematic",
+            },
+            deferred={"signal_source": "price_volume"},
+            entities={
+                "ReturnDecomposition": {
+                    "method": "event_study",
+                    "sample_period": "unknown",
+                },
+            },
+        )
+
+        result = self.process_call(
+            "advance_stage",
+            {"from_stage": 2, "to_stage": 3, "summary": "stage done"},
+            kg_state,
+            stage=2,
+            schema=self.stage_2_schema,
+        )
+
+        self.assertIn("Stage 2 plan gates not passed", result)
+        self.assertNotIn("Routing prerequisites are not satisfied", result)
+
     def test_stage_2_advances_to_stage_3_when_signal_score_exists(self) -> None:
         kg_state = KGState(
             stage=2,
