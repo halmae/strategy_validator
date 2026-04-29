@@ -167,6 +167,10 @@ def main() -> None:
         sync_runtime_state(stage_id, stage_schema, routing, kg_state)
 
     summaries_updated = False
+    if kg_state.workflow_complete and kg_state.stage < max_implemented_stage:
+        kg_state.workflow_complete = False
+        summaries_updated = True
+
     for completed_stage in kg_state.completed_stages:
         completed_schema = schema if completed_stage == kg_state.stage else schema_for_stage(completed_stage)
         kg_state.set_stage_summary(

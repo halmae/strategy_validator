@@ -39,6 +39,20 @@ class StageRuntimeTests(unittest.TestCase):
         self.assertIn("Validation error", result)
         self.assertEqual(kg_state.stage, 0)
 
+    def test_stage_0_mark_gate_is_noop(self) -> None:
+        kg_state = KGState(stage=0)
+
+        result = self.process_call(
+            "mark_gate",
+            {"gate_id": "G0_1", "status": "pending"},
+            kg_state,
+            stage=0,
+            schema=self.classification_schema,
+        )
+
+        self.assertEqual(result, "Stage 0 has no gates; mark_gate ignored.")
+        self.assertEqual(kg_state.gates, {})
+
     def test_stage_1_checks_are_activated_from_routing(self) -> None:
         kg_state = KGState(
             stage=1,
@@ -90,6 +104,52 @@ class StageRuntimeTests(unittest.TestCase):
         self.assertIn("Validation error", result)
         self.assertNotIn("universe_scope", kg_state.deferred)
 
+    def test_stage_1_deferred_values_are_exposed_as_gate(self) -> None:
+        kg_state = KGState(
+            stage=1,
+            type_vector={
+                "alpha_family": "event_driven",
+                "exposure_structure": "long_only",
+                "asset_class": "equity",
+                "market_scope": "korea",
+                "decision_cadence": "daily",
+                "execution_mode": "systematic",
+            },
+            entities={
+                "Edge": {
+                    "type": "behavioral",
+                    "direction": "long",
+                    "horizon": "하루",
+                },
+                "Hypothesis": {
+                    "claim": "This edge exists because attention reacts slowly.",
+                    "mechanism": "Retail attention diffuses over the trading day.",
+                    "falsifiable": True,
+                    "falsification_condition": "No abnormal return remains.",
+                },
+                "MarketInefficiency": {
+                    "persistence": "Attention constraints prevent immediate arbitrage.",
+                    "structural_barrier": "behavioral",
+                },
+            },
+        )
+
+        sync_runtime_state(1, self.stage_1_schema, self.routing, kg_state)
+
+        self.assertEqual(kg_state.gates["G1_0"]["status"], "pending")
+        self.assertEqual(kg_state.gates["G1_3"]["status"], "pass")
+
+        result = self.process_call(
+            "advance_stage",
+            {"from_stage": 1, "to_stage": 2, "summary": "stage done"},
+            kg_state,
+            stage=1,
+            schema=self.stage_1_schema,
+        )
+
+        self.assertIn("G1_0", result)
+        self.assertEqual(kg_state.stage, 1)
+
     def test_stage_1_normalizes_boolean_entity_values(self) -> None:
         kg_state = KGState(
             stage=1,
@@ -114,6 +174,34 @@ class StageRuntimeTests(unittest.TestCase):
         self.assertIn("updated", result)
         self.assertIs(kg_state.entities["Hypothesis"]["falsifiable"], True)
         self.assertEqual(kg_state.gates["G1_6"]["status"], "pass")
+
+    def test_stage_1_horizon_consistency_understands_korean_terms(self) -> None:
+        kg_state = KGState(
+            stage=1,
+            type_vector={
+                "alpha_family": "event_driven",
+                "exposure_structure": "long_only",
+                "asset_class": "equity",
+                "market_scope": "korea",
+                "decision_cadence": "quarterly_plus",
+                "execution_mode": "systematic",
+            },
+            deferred={
+                "universe_scope": "diversified",
+                "universe_anchor": "KOSPI",
+            },
+            entities={
+                "Edge": {
+                    "type": "behavioral",
+                    "direction": "long",
+                    "horizon": "분기 단위",
+                },
+            },
+        )
+
+        sync_runtime_state(1, self.stage_1_schema, self.routing, kg_state)
+
+        self.assertEqual(kg_state.gates["G1_3"]["status"], "pass")
 
     def test_stage_1_completion_advances_to_stage_2(self) -> None:
         kg_state = KGState(

@@ -220,6 +220,28 @@ class StageSummaryTests(unittest.TestCase):
         self.assertEqual(pruned[0].parts[0].text, "turn-1 user")
         self.assertEqual(pruned[-1].parts[0].text, "turn-2 model")
 
+    def test_prune_session_contents_drops_leading_function_response(self) -> None:
+        contents = [
+            types.Content(
+                role="user",
+                parts=[
+                    types.Part(
+                        function_response=types.FunctionResponse(
+                            name="update_type_vector",
+                            response={"result": "ok"},
+                        )
+                    )
+                ],
+            ),
+            types.Content(role="user", parts=[types.Part(text="turn-1 user")]),
+            types.Content(role="model", parts=[types.Part(text="turn-1 model")]),
+        ]
+
+        pruned = prune_session_contents(contents, keep_recent_turns=4)
+
+        self.assertEqual(pruned[0].role, "user")
+        self.assertEqual(pruned[0].parts[0].text, "turn-1 user")
+
 
 if __name__ == "__main__":
     unittest.main()

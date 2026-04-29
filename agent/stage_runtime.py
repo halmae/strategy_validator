@@ -272,6 +272,25 @@ def _sync_stage_1_gates(schema: dict, kg_state: KGState) -> None:
     hypothesis = kg_state.entities.get("Hypothesis", {})
     inefficiency = kg_state.entities.get("MarketInefficiency", {})
 
+    required_deferred = list(schema.get("resolves_deferred", {}).keys())
+    missing_deferred = [
+        name for name in required_deferred if not kg_state.deferred.get(name)
+    ]
+    if missing_deferred:
+        _set_gate_status(
+            kg_state,
+            "G1_0",
+            "pending",
+            f"Stage 1 deferred values are unresolved: missing {missing_deferred}.",
+        )
+    else:
+        _set_gate_status(
+            kg_state,
+            "G1_0",
+            "pass",
+            "Stage 1 deferred values are resolved.",
+        )
+
     _set_gate_status(
         kg_state,
         "G1_1",
@@ -377,13 +396,9 @@ def _ensure_stage_0_ready(schema: dict, kg_state: KGState) -> None:
 
 def _ensure_stage_1_ready(schema: dict, kg_state: KGState) -> None:
     required_deferred = list(schema.get("resolves_deferred", {}).keys())
-    missing_deferred = [
-        name for name in required_deferred if not kg_state.deferred.get(name)
-    ]
-    if missing_deferred:
-        raise RuntimeValidationError(
-            f"Stage 1 is incomplete. Missing deferred values: {missing_deferred}"
-        )
+    for name in required_deferred:
+        if kg_state.deferred.get(name):
+            validate_deferred_update(schema, name, kg_state.deferred[name])
 
     required = _base_gate_ids(schema) + _active_gate_ids_for_stage(1, schema, kg_state)
     unresolved = [
@@ -695,10 +710,49 @@ def _horizon_consistency(decision_cadence: Any, horizon: Any) -> tuple[str, str]
 def _infer_horizon_rank(horizon: str) -> int | None:
     normalized = horizon.lower().strip()
 
-    if any(token in normalized for token in ("minute", "minutes", "hour", "hours", "intraday", "same day", "same-day")):
+    if any(
+        token in normalized
+        for token in (
+            "month",
+            "monthly",
+            "quarter",
+            "year",
+            "annual",
+            "개월",
+            "분기",
+            "월간",
+            "연간",
+            "년",
+        )
+    ) or re.search(r"\d+\s*(개월|월|년)", normalized):
+        return 3
+
+    if any(
+        token in normalized
+        for token in (
+            "minute",
+            "minutes",
+            "min",
+            "mins",
+            "분봉",
+            "hour",
+            "hours",
+            "hr",
+            "hrs",
+            "시간",
+            "intraday",
+            "same day",
+            "same-day",
+            "당일",
+            "장중",
+            "인트라데이",
+        )
+    ) or re.search(r"\d+\s*분(?!기)", normalized):
         return 0
 
-    if "overnight" in normalized:
+    if any(
+        token in normalized for token in ("overnight", "오버나이트", "익일", "다음날")
+    ):
         return 1
 
     match = re.search(r"\b(\d+)\s*day", normalized)
@@ -719,14 +773,27 @@ def _infer_horizon_rank(horizon: str) -> int | None:
             return 2
         return 3
 
-    if any(token in normalized for token in ("day", "daily", "next day", "next-day")):
+    if any(
+        token in normalized
+        for token in (
+            "day",
+            "daily",
+            "next day",
+            "next-day",
+            "하루",
+            "수일",
+            "며칠",
+            "일간",
+            "영업일",
+            "거래일",
+        )
+    ) or re.search(r"\d+\s*일", normalized):
         return 1
 
-    if any(token in normalized for token in ("week", "weekly")):
+    if any(
+        token in normalized for token in ("week", "weekly", "주간", "주일")
+    ) or re.search(r"\d+\s*주", normalized):
         return 2
-
-    if any(token in normalized for token in ("month", "monthly", "quarter", "year", "annual")):
-        return 3
 
     return None
 

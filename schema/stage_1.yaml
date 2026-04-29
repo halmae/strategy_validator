@@ -161,6 +161,10 @@ relationships:
 # All must be satisfied to advance to Stage 2.
 # -----------------------------------------------------------------------------
 gate_conditions:
+  - id: G1_0
+    description: "Stage 1 deferred dimensions are resolved"
+    check: "universe_scope != null and universe_anchor != null"
+
   - id: G1_1
     description: "Edge.type is defined"
     check: Edge.type != null

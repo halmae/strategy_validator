@@ -265,6 +265,9 @@ def process_function_call(
             return f"deferred.{args['dimension']} = {value}"
 
         if name == "mark_gate":
+            if stage == 0:
+                sync_runtime_state(stage, schema, routing, kg_state)
+                return "Stage 0 has no gates; mark_gate ignored."
             if stage not in (1, 2):
                 raise RuntimeValidationError(
                     "mark_gate is only supported during Stage 1 or Stage 2."
@@ -275,6 +278,7 @@ def process_function_call(
             return f"Gate {args['gate_id']}: {args['status']}"
 
         if name == "add_note":
+            # Notes may intentionally target future stages before they exist.
             kg_state.add_note(args["target_stage"], args["note_type"], args["note"])
             return "Note recorded"
 

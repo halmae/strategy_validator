@@ -50,13 +50,13 @@ def prune_session_contents(
         return []
     turns = _split_into_turns(contents)
     if len(turns) <= keep_recent_turns:
-        return list(contents)
+        return _drop_leading_function_responses(contents)
 
     retained_turns = turns[-keep_recent_turns:]
     pruned: list[types.Content] = []
     for turn in retained_turns:
         pruned.extend(turn)
-    return pruned
+    return _drop_leading_function_responses(pruned)
 
 
 def _split_into_turns(contents: list[types.Content]) -> list[list[types.Content]]:
@@ -80,3 +80,18 @@ def _is_user_text_message(content: types.Content) -> bool:
     if content.role != "user":
         return False
     return any(part.text and part.text.strip() for part in content.parts)
+
+
+def _drop_leading_function_responses(
+    contents: list[types.Content],
+) -> list[types.Content]:
+    pruned = list(contents)
+    while pruned and _is_function_response_message(pruned[0]):
+        pruned.pop(0)
+    return pruned
+
+
+def _is_function_response_message(content: types.Content) -> bool:
+    if content.role != "user":
+        return False
+    return bool(content.parts) and all(part.function_response for part in content.parts)
