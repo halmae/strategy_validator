@@ -169,6 +169,11 @@ def build_routing_prompt_snapshot(stage: int, kg_state: KGState) -> dict:
 
 
 def build_market_constraints_snapshot(stage: int, routing: dict, kg_state: KGState) -> dict:
+    """Return market constraint facts available to the prompt.
+
+    active means concrete market constraint entries were selected and included,
+    not merely that Stage 4+ could consume market constraints.
+    """
     if stage < 4:
         return {
             "active": False,
