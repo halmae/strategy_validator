@@ -147,6 +147,17 @@ def attempt_stage_advance(
             f"but advance requested from {from_stage}"
         )
 
+    prerequisite_messages = _missing_prerequisite_messages(
+        from_stage,
+        routing,
+        kg_state,
+    )
+    if prerequisite_messages:
+        raise RuntimeValidationError(
+            "Routing prerequisites are not satisfied: "
+            + " ".join(prerequisite_messages)
+        )
+
     resolved_to_stage = _next_stage_after(from_stage, routing, kg_state)
     allowed_requests = {from_stage + 1, resolved_to_stage}
     if to_stage not in allowed_requests:
@@ -185,22 +196,42 @@ def attempt_stage_advance(
             if skipped
             else ""
         )
+        requested_note = (
+            f" Requested Stage {to_stage}, but routing resolved next stage "
+            f"to {resolved_to_stage}."
+            if to_stage != resolved_to_stage
+            else ""
+        )
         return (
             f"Stage {from_stage} complete.{skip_note} "
-            f"Stage {resolved_to_stage} is not implemented yet."
+            f"Stage {resolved_to_stage} is not implemented yet.{requested_note}"
         )
 
     kg_state.advance_stage(resolved_to_stage)
     kg_state.workflow_complete = False
     if skipped:
         skipped_text = ", ".join(str(stage_id) for stage_id in skipped)
-        return f"Stage {from_stage} -> {resolved_to_stage} (skipped {skipped_text})"
+        requested_note = (
+            f" Requested Stage {to_stage}, but routing resolved next stage "
+            f"to {resolved_to_stage}."
+            if to_stage != resolved_to_stage
+            else ""
+        )
+        return (
+            f"Stage {from_stage} -> {resolved_to_stage} "
+            f"(skipped {skipped_text}).{requested_note}"
+        )
     return f"Stage {from_stage} -> {resolved_to_stage}"
 
 
 def _next_stage_after(from_stage: int, routing: dict, kg_state: KGState) -> int:
     next_stage = from_stage + 1
-    while not _is_stage_required(next_stage, routing, kg_state):
+    max_stage = _routing_max_stage(routing)
+    while next_stage <= max_stage and not _is_stage_required(
+        next_stage,
+        routing,
+        kg_state,
+    ):
         next_stage += 1
     return next_stage
 
@@ -230,14 +261,65 @@ def _stage_catalog_status(stage: int, routing: dict) -> str:
     return "required"
 
 
+def _routing_max_stage(routing: dict) -> int:
+    stage_ids = [
+        stage_spec.get("id")
+        for stage_spec in routing.get("stages", []) or []
+        if isinstance(stage_spec.get("id"), int)
+    ]
+    return max(stage_ids, default=0)
+
+
 def _route_condition_matches(condition: dict, kg_state: KGState) -> bool:
     entity_name = condition.get("kg_entity_exists")
     if entity_name:
         return _entity_exists(kg_state, entity_name)
     for key, expected in condition.items():
-        if kg_state.type_vector.get(key) != expected:
+        actual = kg_state.type_vector.get(key)
+        if actual is None:
+            actual = kg_state.deferred.get(key)
+        if actual != expected:
             return False
     return True
+
+
+def _missing_prerequisite_messages(
+    from_stage: int,
+    routing: dict,
+    kg_state: KGState,
+) -> list[str]:
+    next_stage = from_stage + 1
+    rule_entities = _rule_entities_for_stage(next_stage, routing)
+    messages: list[str] = []
+
+    for prerequisite in routing.get("prerequisites", []) or []:
+        if not _route_condition_matches(prerequisite.get("condition", {}), kg_state):
+            continue
+        required_entity = (prerequisite.get("requires") or {}).get("kg_entity")
+        if not required_entity or required_entity not in rule_entities:
+            continue
+        if _entity_exists(kg_state, required_entity):
+            continue
+
+        message = str(prerequisite.get("message", "")).strip()
+        if message:
+            messages.append(message)
+        else:
+            messages.append(f"{required_entity} is required before Stage {next_stage}.")
+
+    return messages
+
+
+def _rule_entities_for_stage(stage: int, routing: dict) -> set[str]:
+    entities: set[str] = set()
+    for rule in routing.get("rules", []) or []:
+        if rule.get("stage") != stage:
+            continue
+        for condition in rule.get("conditions", []) or []:
+            if_condition = condition.get("if")
+            if isinstance(if_condition, dict) and if_condition.get("kg_entity_exists"):
+                entities.add(if_condition["kg_entity_exists"])
+    return entities
 
 
 def _normalize_dimension_value(dimension_schema: dict, value: Any, label: str) -> str:
@@ -536,6 +618,10 @@ def _sync_stage_relations(stage: int, schema: dict, kg_state: KGState) -> None:
             relation = _derive_mapped_field_relation(stage, spec, kg_state)
             if relation is not None:
                 derived.append(relation)
+        else:
+            raise RuntimeValidationError(
+                f"Unsupported relationship kind for stage {stage}: {kind}"
+            )
 
     kg_state.set_stage_relations(stage, _dedupe_relations(derived))
 

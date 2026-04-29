@@ -3,7 +3,7 @@ import unittest
 from agent.kg_store import KGState
 from agent.runner import process_function_call
 from agent.schema_loader import load_schema
-from agent.stage_runtime import sync_runtime_state
+from agent.stage_runtime import RuntimeValidationError, sync_runtime_state
 
 
 class StageRuntimeTests(unittest.TestCase):
@@ -305,10 +305,59 @@ class StageRuntimeTests(unittest.TestCase):
         )
 
         self.assertIn("not implemented yet", result)
+        self.assertIn(
+            "Requested Stage 3, but routing resolved next stage to 4.",
+            result,
+        )
         self.assertEqual(kg_state.stage, 2)
         self.assertTrue(kg_state.workflow_complete)
         self.assertIn(2, kg_state.completed_stages)
         self.assertIn(3, kg_state.skipped_stages)
+
+    def test_stage_2_event_driven_requires_signal_score_before_stage_3_route(self) -> None:
+        kg_state = KGState(
+            stage=2,
+            type_vector={
+                "alpha_family": "event_driven",
+                "exposure_structure": "long_only",
+                "asset_class": "equity",
+                "market_scope": "korea",
+                "decision_cadence": "daily",
+                "execution_mode": "systematic",
+            },
+            deferred={"signal_source": "price_volume"},
+            entities={
+                "ReturnDecomposition": {
+                    "method": "event_study",
+                    "sample_period": "2020-01 ~ 2024-12",
+                },
+                "event_definition_consistency": {
+                    "tests": "Hypothesis.mechanism",
+                    "evidence_type": "attestation",
+                    "criterion": "Event labels are stable.",
+                    "method": "Review event labels.",
+                },
+                "look_ahead_event_timing": {
+                    "tests": "Hypothesis.falsification_condition",
+                    "evidence_type": "attestation",
+                    "criterion": "No future timestamps leak.",
+                    "method": "Review timestamp source.",
+                },
+            },
+        )
+
+        sync_runtime_state(2, self.stage_2_schema, self.routing, kg_state)
+        result = self.process_call(
+            "advance_stage",
+            {"from_stage": 2, "to_stage": 3, "summary": "stage done"},
+            kg_state,
+            stage=2,
+            schema=self.stage_2_schema,
+        )
+
+        self.assertIn("Routing prerequisites are not satisfied", result)
+        self.assertIn("SignalScore", result)
+        self.assertEqual(kg_state.stage, 2)
 
     def test_stage_2_advances_to_stage_3_when_signal_score_exists(self) -> None:
         kg_state = KGState(
@@ -367,6 +416,18 @@ class StageRuntimeTests(unittest.TestCase):
             kg_state.entities["SignalScore"]["definition"],
             "Signal is triggered when price reaches +10%.",
         )
+
+    def test_stage_2_and_stage_3_signal_direction_enums_stay_in_sync(self) -> None:
+        stage_2_values = (
+            self.stage_2_schema["entities"]["SignalScore"]["properties"]
+            ["signal_direction"]["values"]
+        )
+        stage_3_values = (
+            self.stage_3_schema["entities"]["SignalScore"]["properties"]
+            ["signal_direction"]["values"]
+        )
+
+        self.assertEqual(stage_2_values, stage_3_values)
 
     def test_stage_2_placeholders_do_not_satisfy_plan_gates(self) -> None:
         kg_state = KGState(
@@ -604,6 +665,58 @@ class StageRuntimeTests(unittest.TestCase):
 
         self.assertIn("G3_P2", result)
         self.assertFalse(kg_state.workflow_complete)
+
+    def test_stage_3_evidence_accepts_explicit_not_applicable_text(self) -> None:
+        kg_state = KGState(
+            stage=3,
+            type_vector={
+                "alpha_family": "carry",
+                "exposure_structure": "long_only",
+                "asset_class": "futures",
+                "market_scope": "us",
+                "decision_cadence": "daily",
+                "execution_mode": "systematic",
+            },
+            entities={
+                "SignalScore": {
+                    "definition": "Carry rank across contracts.",
+                    "signal_direction": "higher_better",
+                    "measurement_method": "Hit-rate by carry decile.",
+                    "evaluation_window": "1 month",
+                    "ic_metric": "not applicable",
+                    "hit_rate": "not applicable",
+                    "decay_profile": "Monthly decay is evaluated at rebalance.",
+                    "supports_hypothesis": "inconclusive",
+                    "reasoning": "Evidence is pending but IC is not the chosen metric.",
+                },
+            },
+        )
+
+        sync_runtime_state(3, self.stage_3_schema, self.routing, kg_state)
+
+        self.assertEqual(kg_state.gates["G3_E1"]["status"], "pass")
+
+    def test_unknown_relationship_kind_fails_loudly(self) -> None:
+        schema = {
+            "relationships": [
+                {
+                    "kind": "unsupported_kind",
+                    "subject": "SignalScore",
+                    "predicate": "tests",
+                    "object_ref": "Hypothesis.claim",
+                }
+            ]
+        }
+        kg_state = KGState(
+            stage=3,
+            entities={
+                "SignalScore": {"definition": "A signal."},
+                "Hypothesis": {"claim": "A claim."},
+            },
+        )
+
+        with self.assertRaises(RuntimeValidationError):
+            sync_runtime_state(3, schema, self.routing, kg_state)
 
 
 if __name__ == "__main__":

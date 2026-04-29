@@ -60,12 +60,12 @@ entities:
         type: str
         required: false
         gate_kind: evidence
-        note: "Information coefficient or equivalent predictive association; use 'not applicable' if unsuitable."
+        note: "Information coefficient or equivalent predictive association; use exact text 'not applicable' if unsuitable."
       hit_rate:
         type: str
         required: false
         gate_kind: evidence
-        note: "Directional accuracy / event success rate; use 'not applicable' if unsuitable."
+        note: "Directional accuracy / event success rate; use exact text 'not applicable' if unsuitable."
       decay_profile:
         type: str
         required: false
